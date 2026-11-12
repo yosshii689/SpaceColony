@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>スペースコロニー散策</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #9cc4ee; font-family: "Yu Gothic UI", "Meiryo", sans-serif; }
+  canvas { display: block; }
+  #hud {
+    position: fixed; left: 12px; top: 12px; margin: 0; padding: 10px 14px;
+    background: rgba(10, 20, 35, 0.55); color: #eef4fb; border-radius: 8px;
+    font: 14px/1.55 "Yu Gothic UI", "Meiryo", sans-serif; white-space: pre; pointer-events: none;
+  }
+  #help {
+    position: fixed; left: 12px; bottom: 12px; padding: 6px 12px;
+    background: rgba(10, 20, 35, 0.45); color: #dfe8f2; border-radius: 8px; font-size: 13px; pointer-events: none;
+  }
+  #prompt {
+    position: fixed; left: 50%; top: 62%; transform: translateX(-50%); padding: 8px 18px;
+    background: rgba(10, 20, 35, 0.6); color: #fff; border-radius: 8px; font-size: 16px; pointer-events: none;
+  }
+  #prompt:empty { display: none; }
+  body.photo #hud, body.photo #help, body.photo #prompt { display: none; }
+  #map { position: fixed; inset: 0; display: none; cursor: crosshair; }
+  #start {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: rgba(8, 16, 30, 0.55); color: #fff; cursor: pointer;
+  }
+  #start div { text-align: center; padding: 28px 40px; background: rgba(10, 20, 35, 0.8); border-radius: 14px; }
+  #start h1 { margin: 0 0 6px; font-size: 26px; letter-spacing: 0.08em; }
+  #start p { margin: 6px 0; font-size: 15px; color: #cfdcea; }
+  #start table { margin: 14px auto 0; border-collapse: collapse; font-size: 14px; text-align: left; }
+  #start td { padding: 3px 12px; }
+  #start td:first-child { color: #9fd0ff; white-space: nowrap; }
+  #start .go { margin-top: 18px; font-size: 17px; color: #fff; }
+</style>
+</head>
+<body>
+<pre id="hud"></pre>
+<div id="prompt"></div>
+<canvas id="map"></canvas>
+<div id="help">WASD 移動 ／ W二回押し 高速 ／ Space ジャンプ・上昇 ／ Space二回押し 飛行⇔徒歩 ／ Shift 下降・潜る ／ T 時刻早送り ／ V 描画距離 ／ R 解像度 ／ C 車を呼ぶ ／ E 乗る・降りる ／ M 地図 ／ P 文字を消す ／ K 画像を保存 ／ N 消音 ／ 1〜7 見どころへ移動 ／ 8 最寄り駅 9 次の駅 0 前の駅 ／ Esc 一時停止</div>
+<div id="start"><div>
+  <h1>スペースコロニー散策</h1>
+  <p>直径 6.5 km ・ 全長 30 km のオニールシリンダー</p>
+  <table>
+    <tr><td>W A S D</td><td>移動</td></tr>
+    <tr><td>マウス</td><td>視点</td></tr>
+    <tr><td>W を二回押し</td><td>2回目を押している間、速く走る・速く飛ぶ</td></tr>
+    <tr><td>Space</td><td>ジャンプ（飛行中は上昇）</td></tr>
+    <tr><td>Space を二回押し</td><td>飛行モード ⇔ 歩行モード</td></tr>
+    <tr><td>Shift</td><td>飛行中の下降 ／ 泳いでいるときは潜る</td></tr>
+    <tr><td>T</td><td>押している間、時刻を早送り（昼夜）</td></tr>
+    <tr><td>V</td><td>描画距離の切り替え（低・中・高）</td></tr>
+    <tr><td>R</td><td>解像度の切り替え（自動・100%・75%・50%）。自動は fps が足りないとき画素数を減らす</td></tr>
+    <tr><td>C</td><td>車を目の前に呼ぶ（W 加速 ／ S 減速・後退 ／ A D ハンドル ／ Space ブレーキ、最高 180 km/h）</td></tr>
+    <tr><td>E</td><td>車・モノレール・エレベーターに乗る、降りる</td></tr>
+    <tr><td>8 ／ 9 ／ 0</td><td>モノレールの駅のホームへ移動（8 一番近い駅 ／ 9 次の駅 ／ 0 前の駅）</td></tr>
+    <tr><td>P ／ K</td><td>撮影: P で画面の文字を消す・戻す、K で今の画面を画像として保存</td></tr>
+    <tr><td>N</td><td>音を消す・戻す</td></tr>
+    <tr><td>M</td><td>全体マップ。クリックした場所や駅へ移動</td></tr>
+    <tr><td>1 〜 7</td><td>見どころへ移動（1 中心市街 ／ 2 ビーチ ／ 3 湖 ／ 4 開始地点 ／ 5 市街の上空 ／ 6 宇宙港 ／ 7 エレベーター駅）</td></tr>
+  </table>
+  <p class="go">クリックして開始</p>
+</div></div>
+<script src="vendor/three.min.js"></script>
+<script src="js/core.js"></script>
+<script src="js/terrain.js"></script>
+<script src="js/rail.js"></script>
+<script src="js/world.js"></script>
+<script src="js/city.js"></script>
+<script src="js/port.js"></script>
+<script src="js/vehicles.js"></script>
+<script src="js/life.js"></script>
+<script src="js/whales.js"></script>
+<script src="js/sound.js"></script>
+<script src="js/map.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
