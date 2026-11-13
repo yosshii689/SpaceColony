@@ -2,6 +2,7 @@
 const path = require('path');
 require(path.join(__dirname, '..', 'js', 'core.js'));
 require(path.join(__dirname, '..', 'js', 'terrain.js'));
+require(path.join(__dirname, '..', 'js', 'game.js'));
 require(path.join(__dirname, '..', 'js', 'rail.js'));
 const COL = globalThis.COL, V = COL.V;
 let fail = 0;

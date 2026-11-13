@@ -22,8 +22,6 @@ function appMain() {
   function detectQuality() {
     if (/SwiftShader|llvmpipe|softpipe|Basic Render|Software/i.test(GPU)) return 0;     // GPU を使えていない
     if (/NVIDIA|GeForce|Radeon RX|Radeon Pro|Arc\(?TM\)? [AB]\d/i.test(GPU)) return 3;
-    // 2010〜2013 年ごろの Intel 内蔵 GPU（HD Graphics 無印・2000・3000・2500・4000 など）は最軽量
-    if (/Intel/i.test(GPU) && /HD Graphics(\s*\(?(P?[234]000|2500|Family)\)?)?\s*(Direct3D|\)|$|\/)/i.test(GPU)) return 0;
     if (/Intel/i.test(GPU) && /HD Graphics|UHD Graphics 6\d\d|Iris.*(5\d\d|6[0-3]\d)|Mesa (DRI )?Intel/i.test(GPU)) return 1;   // 古い内蔵 GPU
     return 2;
   }
@@ -47,6 +45,14 @@ function appMain() {
   COL.buildVehicles(scene);
   COL.buildLife(scene);
   COL.buildWhales(scene);
+  // お金と持ち物。セーブデータはタイトル画面で選ぶ（それまでは何も持っていない状態で作っておく）
+  //  確認用: ?money=金額 &own=1 &lamps=0|1（?auto=1 のときはセーブデータを使わず、保存もしない）
+  COL.loadSave();
+  if (q.get('money') !== null) COL.save.money = parseFloat(q.get('money')) || 0;
+  if (q.get('own') === '1') COL.save.owned = true;
+  if (q.get('lamps') !== null) for (let k = 0; k < COL.save.lamps.length; k++) COL.save.lamps[k] = q.get('lamps') === '1' ? 1 : 0;
+  COL.buildSpace(scene);
+  COL.buildMansion(scene);
 
   // ---- 画質の設定（タイトル画面で選ぶ。localStorage に覚える） ----
   let qAuto = true;
@@ -85,7 +91,52 @@ function appMain() {
       chooseQuality(m);
     });
   }
+  // 遊び方のモード: 開発者モード（キーで移動・高速飛行ができる）／ 普通にプレイ（歩く・車・乗り物だけ）
+  //  確認用: ?auto=1 のときは開発者モード。?mode=normal で普通にプレイ
+  function setMode(dev) {
+    COL.devMode = dev;
+    document.body.classList.toggle('dev', dev);
+    if (!dev) player.fly = COL.inHubZone(player.pos);
+  }
+  // 選んだセーブデータを世界に反映する: モード・豪邸・最後にいた場所・時刻
+  function applySave() {
+    const s = COL.save;
+    setMode(!!s.dev);
+    COL.syncMansion();
+    COL.clock = s.clock;
+    if (s.pos) {
+      const c = COL.toCyl(s.pos.p);
+      player.pos = s.pos.p.slice(); player.vel = [0, 0, 0]; player.up = COL.frameAt(c.theta).up;
+      player.fwd = s.pos.f.slice(); player.pitch = s.pos.pitch;
+      player.fly = COL.devMode ? s.pos.fly : COL.inHubZone(player.pos);
+      COL.stepPlayer(player, {}, 0);
+    }
+  }
+  // 今いる場所を覚える（乗り物・採掘船に乗っている間は、乗る前の場所のまま）
+  function recordPos() {
+    if (!COL.saveId) return;
+    COL.save.clock = COL.clock;
+    if (COL.pilot || COL.ride || COL.driving || COL.onTrain || COL.isFading()) return;
+    COL.save.pos = { p: player.pos.slice(), f: player.fwd.slice(), pitch: player.pitch, fly: !!player.fly };
+  }
+  // 保存のしかた: お金・家・明かりが変わったときは、その場で自動で保存する（場所と時刻は書き換えない）。
+  //  場所と時刻も含めた全部は、一時停止の画面の「上書き保存」で保存する
+  const two = function (n) { return ('0' + n).slice(-2); };
+  function showSaved() {
+    const t = COL.save.updated ? new Date(COL.save.updated) : null;
+    $('saveNote').textContent = !COL.saveId ? '（確認用の起動なので保存しません）'
+      : '「' + COL.save.name + '」のセーブデータ　最後の保存 ' + (t ? (t.getMonth() + 1) + '/' + t.getDate() + ' ' + two(t.getHours()) + ':' + two(t.getMinutes()) : '—');
+  }
+  function manualSave() {
+    if (!COL.saveId) return false;
+    recordPos();
+    const ok = COL.storeSave();
+    showSaved();
+    COL.toast(ok ? '上書き保存しました' : '保存できませんでした（ブラウザの保存領域がいっぱいかもしれません）', 3);
+    return ok;
+  }
   BOOT.start = function () {
+    applySave();
     BOOT.titleOn = false;
     $('title').style.display = 'none';
     COL.initSound(); renderer.domElement.requestPointerLock();
@@ -125,16 +176,20 @@ function appMain() {
   if (q.get('veh') === 'car') COL.debugVehicle(player, 'car', num('spd', 0));
   if (q.get('map') === '1') COL.toggleMap();
   if (q.get('people') === '1') COL.debugPeople = true;
+  // 確認用: ?pilot=1&sx=&sy=&sz=&syaw=&spitch=&rare=1&cargo=数 / ?home=1
+  if (q.get('pilot') === '1') COL.debugPilot(player, { pos: q.get('sz') !== null ? [num('sx', 0), num('sy', 0), num('sz', -2000)] : null, yaw: num('syaw', 0) * rad, pitch: num('spitch', 0) * rad, rare: q.get('rare') === '1', cargo: num('cargo', 0) });
+  if (q.get('home') === '1') COL.goHome(player);
   if (q.get('whale') === '1') COL.debugWhale(player, num('wt', 0), num('wd', 40), num('wh', 3), num('ws', 0) * rad);
 
   // ---- 入力 ----
   const keys = {};
-  let mouseX = 0, mouseY = 0, jumpQueued = false, usePressed = false, callPressed = false, uiHidden = false, shotQueued = false;
+  let mouseX = 0, mouseY = 0, jumpQueued = false, usePressed = false, callPressed = false, skipPressed = false, uiHidden = false, shotQueued = false;
   // 二回押し: W を素早く2回 → 2回目を押している間ずっと高速。Space を素早く2回 → 飛行と徒歩の切り替え
   const DOUBLE_TAP = 0.3;
   let lastW = -9, lastSpace = -9, sprint = false;
   const locked = function () { return document.pointerLockElement === renderer.domElement; };
   window.addEventListener('keydown', function (e) {
+    if (BOOT.titleOn || (e.target && e.target.tagName === 'INPUT')) return;      // タイトル画面で名前を打っている間など
     if (e.code === 'Space' || e.code.indexOf('Arrow') === 0) e.preventDefault();
     if (e.repeat) return;
     keys[e.code] = true;
@@ -144,27 +199,35 @@ function appMain() {
       lastW = t;
     }
     if (e.code === 'Space') {
-      if (t - lastSpace < DOUBLE_TAP) { player.fly = !player.fly; lastSpace = -9; }
+      if (t - lastSpace < DOUBLE_TAP && !COL.pilot && COL.devMode) { player.fly = !player.fly; lastSpace = -9; }
       else { jumpQueued = true; lastSpace = t; }
     }
-    if (e.code === 'KeyF') { player.fly = !player.fly; }
+    if (e.code === 'KeyF' && !COL.pilot && COL.devMode) { player.fly = !player.fly; }
     if (e.code === 'KeyV') { qAuto = false; COL.cycleQuality(); try { localStorage.setItem('colQualityMode', String(COL.getQuality())); } catch (err) {} }
     if (e.code === 'KeyR') { resMode = (resMode + 1) % RES_MODES.length; applyRes(RES_MODES[resMode] || 1); resCeil = 1; }
     // 数字キーで見どころへ移動
     if (e.code === 'KeyE') usePressed = true;
-    if (e.code === 'KeyC') callPressed = true;
+    if (e.code === 'KeyC' && !COL.pilot) callPressed = true;
+    if (e.code === 'KeyQ') skipPressed = true;                // 時間を飛ばす（モノレール・ベッド）
+    if (COL.pilot && /^Digit\d$/.test(e.code)) return;       // 操縦中は場所の移動をしない
+    // H: 自宅へ。普通にプレイでは豪邸を買ってから
+    if (e.code === 'KeyH' && !COL.pilot && !COL.isFading()) {
+      if (COL.devMode || COL.save.owned) { COL.ride = null; COL.driving = false; COL.onTrain = null; COL.goHome(player); }
+      else COL.toast('H キーで帰れるのは、豪邸を買ってからです\n売地は M の地図の黄色い家のところです', 4);
+    }
     COL.initSound();
     if (e.code === 'KeyN') COL.toggleMute();
     // 撮影: P で画面の文字を消す／戻す、K で今の画面を画像として保存
     if (e.code === 'KeyP') { uiHidden = !uiHidden; document.body.classList.toggle('photo', uiHidden); }
     if (e.code === 'KeyK') shotQueued = true;
+    if (e.code === 'KeyM' || (e.code === 'Escape' && COL.mapOpen())) {
+      if (COL.toggleMap()) document.exitPointerLock(); else renderer.domElement.requestPointerLock();
+    }
+    if (!COL.devMode) return;                                 // ここから下は開発者モードだけ（キーで移動）
     // 8: 一番近い駅のホームへ、9: 次の駅へ、0: 前の駅へ
     if (e.code === 'Digit8') COL.stationWarp(player, 'near');
     if (e.code === 'Digit9') COL.stationWarp(player, 1);
     if (e.code === 'Digit0') COL.stationWarp(player, -1);
-    if (e.code === 'KeyM' || (e.code === 'Escape' && COL.mapOpen())) {
-      if (COL.toggleMap()) document.exitPointerLock(); else renderer.domElement.requestPointerLock();
-    }
     if (e.code === 'Digit6' || e.code === 'Digit7') {         // 6: 宇宙港ドックの入口、7: エレベーターの麓の駅
       COL.ride = null; COL.driving = false; COL.onTrain = null;
       const th = -90 * rad, hub = e.code === 'Digit6';
@@ -189,11 +252,20 @@ function appMain() {
     mouseX += e.movementX; mouseY += e.movementY;
   });
   $('start').style.display = 'none';
+  // 一時停止の画面から: 上書き保存 ／ タイトルへ（別のプレイヤーに替わるとき）
+  $('saveBtn').addEventListener('click', function (e) { e.stopPropagation(); manualSave(); });
+  $('toTitle').addEventListener('click', function (e) {
+    e.stopPropagation();
+    if (COL.saveId && !confirm('タイトルにもどります。\n上書き保存していない「今いる場所と時刻」は元に戻ります（お金・家・明かりは保存済みです）。')) return;
+    location.href = location.pathname;
+  });
   $('start').addEventListener('click', function () { COL.initSound(); renderer.domElement.requestPointerLock(); });
   renderer.domElement.addEventListener('click', function () { if (!locked()) renderer.domElement.requestPointerLock(); });
   document.addEventListener('pointerlockchange', function () {
     $('start').style.display = (locked() || COL.mapOpen() || $('title').style.display !== 'none') ? 'none' : '';
+    if ($('start').style.display === '') showSaved();
   });
+  setMode(q.get('mode') !== 'normal');
   if (q.get('auto') === '1') { $('start').style.display = 'none'; $('title').style.display = 'none'; BOOT.titleOn = false; }
 
   // ---- 解像度の自動調整: fps が足りないときは描く画素数を減らす（R キーで 自動 / 100% / 75% / 50%） ----
@@ -265,7 +337,9 @@ function appMain() {
     const deg = ((c.theta - COL.THETA0) * 180 / Math.PI % 360 + 360) % 360;
     const sp = V.len(player.vel) * 3.6;
     hud.textContent =
-      '場所　 ' + (c.z < 0 ? '宇宙港ドック' : st.name + (st.land ? '・' + COL.placeName(c.theta, c.z) : '')) + (COL.ride ? '（エレベーター）' : '') + '\n' +
+      (COL.saveId ? 'プレイヤー ' + COL.save.name + '\n' : '') +
+      '所持金 ' + COL.fmtCr(COL.save.money) + (COL.save.owned ? '　（' + COL.save.day + ' 日目）' : '') + '\n' +
+      '場所　 ' + (c.z < -COL.DOCK_LEN || c.r > COL.R + 80 ? '宇宙' : c.z < 0 ? '宇宙港ドック' : st.name + (st.land ? '・' + COL.placeName(c.theta, c.z) : '')) + (COL.ride ? '（エレベーター）' : '') + '\n' +
       '周方向 ' + deg.toFixed(1) + '°（' + (deg / 360 * 2 * Math.PI * COL.R / 1000).toFixed(2) + ' km）\n' +
       '軸方向 ' + (c.z / 1000).toFixed(2) + ' km / 30 km\n' +
       '標高　 ' + c.h.toFixed(Math.abs(c.h) < 100 ? 1 : 0) + ' m（地面から ' + Math.max(0, c.h - COL.groundH(c.theta, c.z)).toFixed(0) + ' m）\n' +
@@ -274,11 +348,12 @@ function appMain() {
       '時刻　 ' + ('0' + Math.floor(COL.clock)).slice(-2) + ':' + ('0' + Math.floor(COL.clock % 1 * 60)).slice(-2) + '\n' +
       '描画　 ' + COL.qualityName() + (qAuto ? '（自動）' : '') + '（V）　解像度 ' + (resMode === 0 ? '自動 ' : '') + Math.round(resScale * 100) + '%（R）\n' +
       '負荷　 ' + (renderer.info.render.triangles / 1e6).toFixed(2) + ' 百万三角形・' + renderer.info.render.calls + ' 回\n' +
-      'モード ' + (COL.vehicleSpeedNote() || (player.fly ? '飛行' : player.swim ? '水泳' : '徒歩')) + (sprint ? '（高速）' : '') + '　' + fps.toFixed(0) + ' fps';
+      (COL.devMode ? '［開発者］' : '') + 'モード ' + (COL.vehicleNoteSpace() || COL.vehicleSpeedNote() || (player.fly ? '飛行' : player.swim ? '水泳' : '徒歩')) + (sprint ? '（高速）' : '') + '　' + fps.toFixed(0) + ' fps';
   }
 
   const _look = new THREE.Vector3();
   function updateCamera() {
+    if (COL.pilot) { COL.pilotCamera(camera); return; }
     const e = COL.eyePos(player), d = COL.lookDir(player);
     camera.position.set(e[0], e[1], e[2]);
     // 高く飛ぶほど手前の描画限界を遠ざけて、遠景の奥行きの精度をかせぐ
@@ -323,20 +398,35 @@ function appMain() {
     const dt = Math.max(0, Math.min(0.05, (now - last) / 1000));
     last = now;
     const inp = readInput();
-    if (COL.ride) COL.rideStep(player, inp, dt);
+    if (COL.pilot) COL.pilotStep(player, inp, dt);
+    else if (COL.ride) COL.rideStep(player, inp, dt);
     else if (COL.driving) COL.driveStep(player, inp, dt);
     else if (COL.onTrain) COL.trainStep(player, inp, dt);
-    else COL.stepPlayer(player, inp, dt);
+    else if (COL.devMode) COL.stepPlayer(player, inp, dt);
+    else {
+      // 普通にプレイ: 飛べない。ただし宇宙港の無重力の区域では漂って動け、そこから外へは出られない
+      const zin = COL.inHubZone(player.pos), old = player.pos.slice();
+      player.fly = zin;
+      COL.stepPlayer(player, inp, dt);
+      if (zin && !COL.inHubZone(player.pos)) { player.pos = old; player.vel = [0, 0, 0]; }
+    }
     // E キーは、車 → モノレール → エレベーターの順で、当てはまる物に使う
-    const vh = COL.updateVehicles(dt, player, usePressed, callPressed, player.pos);
+    const vh = COL.updateVehicles(dt, player, usePressed, callPressed, player.pos, skipPressed);
     const busy = COL.driving || COL.onTrain;
     const pt = COL.updatePort(dt, player, usePressed && !vh.used && !busy);
-    $('prompt').textContent = vh.text || (busy ? '' : pt) || '';
-    usePressed = callPressed = false;
+    // 続いて採掘船、豪邸（看板・スイッチ・ベッド）
+    const sp = COL.updateSpace(dt, player, usePressed && !vh.used && !busy && !pt, camera);
+    const free = !vh.used && !busy && !pt && !sp.used && !sp.text;
+    const mn = COL.updateMansion(dt, player, usePressed && free, skipPressed && free);
+    COL.updateToast(dt);
+    $('prompt').textContent = vh.text || (busy ? '' : pt) || sp.text || mn.text || '';
+    usePressed = callPressed = skipPressed = false;
     const eye = COL.toCyl(COL.eyePos(player)), wat = COL.waterAt(eye.theta, eye.z);
     COL.underwater = !!wat && eye.h < wat.level;
     COL.underwaterSea = COL.underwater && wat.kind === '海';
+    const clock0 = COL.clock;
     COL.updateEnv(dt, keys.KeyT ? 90 : 1);                // T を押している間は時刻を早送り
+    if (COL.clock < clock0) { COL.save.day++; COL.storeSave(); }     // 0時をまたいだら日付を進める
     updateCamera();
     COL.updateLife(dt, player);
     COL.updateWhales(dt, player, camera, renderer);

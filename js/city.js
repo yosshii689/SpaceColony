@@ -1610,7 +1610,7 @@
     // life: 住民・車・鳥・魚の数の割合 / res: 解像度の上限 / fx: 窓の部屋・水中の光の網目 / whales: クジラの有無
     // far: これより遠くは描かず霧で隠す（0 = コロニー全体を描く） / tree: 木を細かい形で描く距離
     { name: '最軽量', near: 260, shadow: 0, small: 400, life: 0.15, res: 0.5, fx: 0, whales: 0, far: 1000, tree: 90 },
-    { name: '低', near: 420, shadow: 0, small: 1200, life: 0.4, res: 0.75, fx: 0, whales: 1, far: 2500, tree: 140 },
+    { name: '低', near: 380, shadow: 0, small: 2200, life: 0.5, res: 1, fx: 1, whales: 1, far: 0, tree: 160 },
     { name: '中', near: 650, shadow: 300, small: 3600, life: 1, res: 1, fx: 1, whales: 1, far: 0, tree: 210 },
     { name: '高', near: 1000, shadow: 440, small: 6000, life: 1, res: 1, fx: 1, whales: 1, far: 0, tree: 210 },
   ];

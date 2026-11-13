@@ -125,7 +125,7 @@
       nature = NATURE[zone] || 0;
       water = Math.max(0, 1 - Math.max(0, d) / 180) * (zone === 'beach' || d < 60 ? 1 : 0.6);
     }
-    const uw = COL.underwater ? 1 : 0, riding = COL.onTrain ? 1 : 0, driving = COL.driving ? 1 : 0;
+    const uw = COL.underwater ? 1 : 0, riding = COL.onTrain ? 1 : 0, driving = (COL.driving || COL.pilot) ? 1 : 0;
     set('wind', (0.05 + 0.10 * (1 - low)) * (1 - uw) * (inDock ? 0.2 : 1));
     set('city', 0.22 * urban * low * (1 - 0.4 * night) * (1 - uw));
     set('waves', (0.16 * water * low + 0.25 * uw) * (0.75 + 0.25 * Math.sin(ctx.currentTime * 0.9)));

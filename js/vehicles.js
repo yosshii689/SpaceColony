@@ -388,6 +388,29 @@
     COL.onTrain = { rev: rev, k: k, lx: 0, ly: 0, vy: 0, lz: clamp(along, -IN_LEN + 0.5, IN_LEN - 0.5),
                     yaw: Math.atan2(V.dot(p.fwd, w.Rw), V.dot(p.fwd, w.T)) };
   }
+  // 乗車中に時間を飛ばす: 駅 j（-1 なら次に止まる駅）に着いて止まったところまで進める
+  //  電車の時刻表とコロニーの時刻を同じだけ進めるので、ワープではなく「乗っていった」ことになる
+  function skipTime(j) {
+    const tr = COL.onTrain;
+    if (!tr) return false;
+    const cur = nearestStation(rl.trainDist(tr.rev, tr.k, clock)), here = cur.dist < 0.5 ? cur.j : -1;
+    if (j === here) return false;
+    for (let t = clock + 1, end = clock + rl.lap + 60; t < end; t += 1) {
+      const ns = nearestStation(rl.trainDist(tr.rev, tr.k, t));
+      if (ns.dist >= 0.5 || ns.j === here || (j >= 0 && ns.j !== j)) continue;
+      const sec = t + 0.5 - clock;
+      clock += sec;
+      COL.setClock(COL.clock + sec * COL.HOURS_PER_SEC);
+      const min = Math.round(sec * COL.HOURS_PER_SEC * 60);       // コロニーの時間で何分乗ったか
+      carMsg = rl.stations[ns.j].name + 'に着きました（' + (min >= 60 ? Math.floor(min / 60) + ' 時間 ' : '') + (min % 60) + ' 分）'; carMsgT = 4;
+      return true;
+    }
+    return false;
+  }
+  COL.trainSkip = function (j) {
+    if (!COL.onTrain || COL.isFading()) return false;
+    return COL.fadeThen(function () { skipTime(j); });
+  };
   COL.warpToStation = function (p, j) { COL.onTrain = null; COL.driving = false; COL.ride = null; toPlatform(p, j, 1); stIndex = j; };
   // 駅のホームへ移動する。how: 'near' = 一番近い駅, +1 / -1 = 路線に沿って次・前の駅
   let stIndex = -1;
@@ -413,7 +436,7 @@
   };
 
   // 毎フレーム。use: E キー, call: C キー。戻り値: { text: 案内の文, used: E を使ったか }
-  COL.updateVehicles = function (dt, p, use, call, cam) {
+  COL.updateVehicles = function (dt, p, use, call, cam, skip) {
     clock += dt;
     updateTrains(cam);
     updateTrackLod(cam);
@@ -436,15 +459,18 @@
     // ---- モノレール ----
     if (COL.onTrain) {
       const tr = COL.onTrain, d = rl.trainDist(tr.rev, tr.k, clock), ns = nearestStation(d), n = rl.stations.length;
+      if (COL.isFading()) return { text: '', used: false };
+      if (skip) { COL.trainSkip(-1); return { text: '', used: false }; }
+      const SKIP = '　／　Q: 次の駅まで時間を飛ばす（M の地図で駅を選ぶと、その駅まで）';
       if (ns.dist < 0.5) {
         if (use) { leaveTrain(p, ns.j); return { text: '', used: true }; }
-        return { text: 'E: 降りる（' + rl.stations[ns.j].name + '）', used: false };
+        return { text: (carMsgT > 0 ? carMsg + '　' : '') + 'E: 降りる（' + rl.stations[ns.j].name + '）' + SKIP, used: false };
       }
       if (use) { leaveTrain(p, -1); return { text: '', used: true }; }
       // 次に止まる駅
       const nj = tr.rev ? (wrapD(rl.stations[ns.j].s - d) < 0 ? ns.j : (ns.j - 1 + n) % n)
                         : (wrapD(rl.stations[ns.j].s - d) > 0 ? ns.j : (ns.j + 1) % n);
-      return { text: (tr.rev ? '内回り' : '外回り') + '　次は ' + rl.stations[nj].name + '　／　E: ここで飛び降りる', used: false };
+      return { text: (tr.rev ? '内回り' : '外回り') + '　次は ' + rl.stations[nj].name + '　／　E: ここで飛び降りる' + SKIP, used: false };
     }
     // 駅の近くか
     const c = COL.toCyl(p.pos);

@@ -21,13 +21,33 @@
     background: rgba(10, 20, 35, 0.6); color: #fff; border-radius: 8px; font-size: 16px; pointer-events: none;
   }
   #prompt:empty { display: none; }
-  body.photo #hud, body.photo #help, body.photo #prompt { display: none; }
+  #shiphud {
+    position: fixed; right: 12px; top: 12px; margin: 0; padding: 10px 14px; display: none;
+    background: rgba(10, 20, 35, 0.55); color: #eef4fb; border-radius: 8px;
+    font: 14px/1.55 "Yu Gothic UI", "Meiryo", sans-serif; white-space: pre; pointer-events: none;
+  }
+  #toast {
+    position: fixed; left: 50%; top: 22%; transform: translateX(-50%); padding: 14px 26px; opacity: 0; transition: opacity 0.5s;
+    background: rgba(10, 20, 35, 0.78); color: #fff; border-radius: 10px; font-size: 18px; line-height: 1.7;
+    white-space: pre; text-align: center; pointer-events: none;
+  }
+  .mark {
+    position: fixed; display: none; transform: translate(-50%, -50%); padding: 3px 10px; border-radius: 6px;
+    background: rgba(10, 20, 35, 0.6); color: #9fe8ff; font-size: 14px; white-space: nowrap; pointer-events: none;
+  }
+  #markRare { color: #e2b0ff; }
+  #fade { position: fixed; inset: 0; background: #000; opacity: 0; transition: opacity 1.1s; pointer-events: none; z-index: 5; }
+  body.photo #hud, body.photo #help, body.photo #prompt, body.photo #shiphud, body.photo #toast, body.photo .mark { display: none; }
+  body:not(.dev) .dev-only, body.dev .nrm-only { display: none; }
+  #title button.dev { background: #5a4a7a; font-size: 17px; }
+  #title button.dev:hover { background: #6e5b94; }
   #map { position: fixed; inset: 0; display: none; cursor: crosshair; }
   #start {
     position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
     background: rgba(8, 16, 30, 0.55); color: #fff; cursor: pointer;
   }
-  #start div { text-align: center; padding: 28px 40px; background: rgba(10, 20, 35, 0.8); border-radius: 14px; }
+  #start > div { text-align: center; padding: 28px 40px; background: rgba(10, 20, 35, 0.8); border-radius: 14px; max-height: calc(100vh - 40px); box-sizing: border-box; overflow-y: auto; }
+  #start .savebar { margin-top: 10px; }
   #start h1 { margin: 0 0 6px; font-size: 26px; letter-spacing: 0.08em; }
   #start p { margin: 6px 0; font-size: 15px; color: #cfdcea; }
   #start table { margin: 14px auto 0; border-collapse: collapse; font-size: 14px; text-align: left; }
@@ -49,7 +69,25 @@
   #title button.sub { background: #3a4a60; font-size: 17px; }
   #title button.sub:hover { background: #4b5f7a; }
   #title button.sel { outline: 3px solid #9fd0ff; }
-  #title #qpanel { display: none; }
+  #title #qpanel, #title #pnew, #title #pload { display: none; }
+  #title button:disabled { background: #34404f; color: #8a96a6; cursor: default; }
+  #title input {
+    display: block; box-sizing: border-box; width: 100%; margin: 6px 0 4px; padding: 10px 14px; font: inherit; font-size: 18px;
+    color: #fff; background: rgba(255, 255, 255, 0.1); border: 1px solid #5a7090; border-radius: 10px;
+  }
+  #slots { max-height: 52vh; overflow-y: auto; margin: 4px 0 6px; }
+  .slot { display: flex; gap: 8px; align-items: stretch; margin-top: 10px; }
+  #title .slot button { margin: 0; text-align: left; font-size: 15px; line-height: 1.5; }
+  #title .slot button b { font-size: 18px; }
+  #title .slot button.del { width: auto; flex: none; padding: 0 14px; background: #6a3a40; font-size: 14px; text-align: center; }
+  #title .slot button.del:hover { background: #8a4850; }
+  #start button.pbtn {
+    margin: 4px 4px 0; padding: 8px 18px; font: inherit; font-size: 15px; color: #fff;
+    background: #3a4a60; border: 0; border-radius: 8px; cursor: pointer;
+  }
+  #start button#saveBtn { background: #2f6fb5; }
+  #start button#saveBtn:hover { background: #3f86d4; }
+  #start button#toTitle:hover { background: #4b5f7a; }
   #title .note { white-space: pre-line; }
   #title .note { margin: 12px 0 6px; font-size: 13px; color: #b8c8da; text-align: left; line-height: 1.5; min-height: 3em; }
 </style>
@@ -57,16 +95,39 @@
 <body>
 <pre id="hud"></pre>
 <div id="prompt"></div>
+<pre id="shiphud"></pre>
+<div id="toast"></div>
+<div id="markDock" class="mark"></div>
+<div id="markRare" class="mark"></div>
+<div id="fade"></div>
 <canvas id="map"></canvas>
-<div id="help">WASD 移動 ／ W二回押し 高速 ／ Space ジャンプ・上昇 ／ Space二回押し 飛行⇔徒歩 ／ Shift 下降・潜る ／ T 時刻早送り ／ V 画質 ／ R 解像度 ／ C 車を呼ぶ ／ E 乗る・降りる ／ M 地図 ／ P 文字を消す ／ K 画像を保存 ／ N 消音 ／ 1〜7 見どころへ移動 ／ 8 最寄り駅 9 次の駅 0 前の駅 ／ Esc 一時停止</div>
+<div id="help"><span class="dev-only">［開発者モード］ WASD 移動 ／ W二回押し 高速 ／ Space ジャンプ・上昇 ／ Space二回押し 飛行⇔徒歩 ／ Shift 下降・潜る ／ T 時刻早送り ／ V 画質 ／ R 解像度 ／ C 車を呼ぶ ／ E 乗る・降りる・使う ／ Q 時間を飛ばす ／ H 自宅（売地）へ ／ M 地図 ／ P 文字を消す ／ K 画像を保存 ／ N 消音 ／ 1〜7 見どころへ移動 ／ 8 最寄り駅 9 次の駅 0 前の駅 ／ Esc 一時停止・上書き保存</span><span class="nrm-only">WASD 移動 ／ W二回押し 走る ／ Space ジャンプ ／ Shift 潜る ／ T 時刻早送り ／ V 画質 ／ R 解像度 ／ C 車を呼ぶ ／ E 乗る・降りる・使う ／ Q 時間を飛ばす（モノレール・ベッド） ／ H 自宅へ（豪邸を買った後） ／ M 地図 ／ P 文字を消す ／ K 画像を保存 ／ N 消音 ／ Esc 一時停止・上書き保存</span></div>
 <div id="title"><div class="box">
   <div id="tmain">
     <h1>スペースコロニー散策</h1>
     <p>直径 6.5 km ・ 全長 30 km のオニールシリンダー</p>
-    <button id="goBtn">ゲームスタート</button>
+    <button id="newBtn">あたらしく始める</button>
+    <button id="contBtn">続きから始める</button>
     <button id="qBtn" class="sub">画質設定</button>
     <div id="tstat" class="note" style="text-align:center;min-height:0">読み込み中…（古いパソコンでは時間がかかります）</div>
     <div id="terr" class="note" style="display:none;color:#ffb4a8;min-height:0"></div>
+  </div>
+  <div id="pnew">
+    <h1 style="font-size:28px">あたらしく始める</h1>
+    <p>所持金 0 Cr・家なしから始まります</p>
+    <div class="note" style="min-height:0;margin:0">プレイヤーの名前</div>
+    <input id="pname" maxlength="20" placeholder="なまえ" autocomplete="off">
+    <button id="goBtn">普通にプレイ</button>
+    <button id="devBtn" class="dev">開発者モード（キーで移動・高速で飛べる）</button>
+    <div id="nstat" class="note" style="text-align:center;min-height:0"></div>
+    <button class="sub back">もどる</button>
+  </div>
+  <div id="pload">
+    <h1 style="font-size:28px">続きから始める</h1>
+    <p>遊ぶセーブデータを選んでください</p>
+    <div id="slots"></div>
+    <div id="lstat" class="note" style="text-align:center;min-height:0"></div>
+    <button class="sub back">もどる</button>
   </div>
   <div id="qpanel">
     <h1 style="font-size:28px">画質設定</h1>
@@ -83,23 +144,35 @@
 <div id="start"><div>
   <h1>スペースコロニー散策</h1>
   <p>直径 6.5 km ・ 全長 30 km のオニールシリンダー</p>
+  <div class="savebar">
+    <button id="saveBtn" class="pbtn">上書き保存（今いる場所・時刻も）</button>
+    <button id="toTitle" class="pbtn">タイトルにもどる（プレイヤーの交代）</button>
+    <p id="saveNote" style="font-size:13px;margin:6px 0 0"></p>
+  </div>
   <table>
     <tr><td>W A S D</td><td>移動</td></tr>
     <tr><td>マウス</td><td>視点</td></tr>
-    <tr><td>W を二回押し</td><td>2回目を押している間、速く走る・速く飛ぶ</td></tr>
-    <tr><td>Space</td><td>ジャンプ（飛行中は上昇）</td></tr>
-    <tr><td>Space を二回押し</td><td>飛行モード ⇔ 歩行モード</td></tr>
-    <tr><td>Shift</td><td>飛行中の下降 ／ 泳いでいるときは潜る</td></tr>
+    <tr class="nrm-only"><td>モード</td><td>普通にプレイ（飛ぶことと、キーでの移動はできません）</td></tr>
+    <tr class="dev-only"><td>モード</td><td>開発者モード（キーで見どころへ移動・飛行・高速飛行ができます）</td></tr>
+    <tr><td>W を二回押し</td><td>2回目を押している間、速く走る<span class="dev-only">・速く飛ぶ</span></td></tr>
+    <tr><td>Space</td><td>ジャンプ（<span class="dev-only">飛行中と、</span>宇宙港の無重力の区域では上昇）</td></tr>
+    <tr class="dev-only"><td>Space を二回押し</td><td>飛行モード ⇔ 歩行モード</td></tr>
+    <tr><td>Shift</td><td>下降（<span class="dev-only">飛行中・</span>無重力の区域）／ 泳いでいるときは潜る</td></tr>
     <tr><td>T</td><td>押している間、時刻を早送り（昼夜）</td></tr>
     <tr><td>V</td><td>画質の切り替え（最軽量・低・中・高）。遠くの描画・影・人や車の数が変わる</td></tr>
     <tr><td>R</td><td>解像度の切り替え（自動・100%・75%・50%）。自動は fps が足りないとき画素数を減らす</td></tr>
     <tr><td>C</td><td>車を目の前に呼ぶ（W 加速 ／ S 減速・後退 ／ A D ハンドル ／ Space ブレーキ、最高 180 km/h）</td></tr>
-    <tr><td>E</td><td>車・モノレール・エレベーターに乗る、降りる</td></tr>
-    <tr><td>8 ／ 9 ／ 0</td><td>モノレールの駅のホームへ移動（8 一番近い駅 ／ 9 次の駅 ／ 0 前の駅）</td></tr>
+    <tr><td>E</td><td>車・モノレール・エレベーター・採掘船に乗る、降りる ／ 明かりのスイッチ・ベッドを使う ／ 売地を買う</td></tr>
+    <tr><td>Q</td><td>時間を飛ばす: モノレールでは次の駅まで（M の地図で駅を選ぶとその駅まで）／ ベッドでは夜のはじまり 18:00 まで（E なら朝 7:00 まで）</td></tr>
+    <tr class="nrm-only"><td>宇宙港へ</td><td>陸地の宇宙港側にあるエレベーター駅（地図の水色の四角）で E。上は無重力なので、漂って採掘船まで行けます</td></tr>
+    <tr><td>採掘船</td><td>宇宙港のドック<span class="dev-only">（6 キー）</span>で E。マウスで向き、W S 前後、A D 左右、Space Shift 上下。隕石に機首を向けて左クリック長押しで採掘。戻って E で着艦すると鉱石が売れる</td></tr>
+    <tr class="dev-only"><td>H</td><td>自宅へ移動（買う前は売地の看板の前へ）。お金が貯まると豪邸を建てられる</td></tr>
+    <tr class="nrm-only"><td>H</td><td>豪邸を買った後は、自宅へ移動。売地は地図の黄色い家（陸地A・ガラスの端寄りの海辺）</td></tr>
+    <tr class="dev-only"><td>8 ／ 9 ／ 0</td><td>モノレールの駅のホームへ移動（8 一番近い駅 ／ 9 次の駅 ／ 0 前の駅）</td></tr>
     <tr><td>P ／ K</td><td>撮影: P で画面の文字を消す・戻す、K で今の画面を画像として保存</td></tr>
     <tr><td>N</td><td>音を消す・戻す</td></tr>
-    <tr><td>M</td><td>全体マップ。クリックした場所や駅へ移動</td></tr>
-    <tr><td>1 〜 7</td><td>見どころへ移動（1 中心市街 ／ 2 ビーチ ／ 3 湖 ／ 4 開始地点 ／ 5 市街の上空 ／ 6 宇宙港 ／ 7 エレベーター駅）</td></tr>
+    <tr><td>M</td><td>全体マップ。<span class="dev-only">クリックした場所や駅へ移動。</span>モノレールに乗っているときは、駅をクリックするとその駅まで時間を飛ばす</td></tr>
+    <tr class="dev-only"><td>1 〜 7</td><td>見どころへ移動（1 中心市街 ／ 2 ビーチ ／ 3 湖 ／ 4 開始地点 ／ 5 市街の上空 ／ 6 宇宙港 ／ 7 エレベーター駅）</td></tr>
   </table>
   <p class="go">クリックして開始</p>
 </div></div>
@@ -117,17 +190,63 @@
   window.addEventListener('error', function (ev) {
     B.fail(ev.message + (ev.filename ? '（' + ev.filename.split('/').pop() + ' ' + ev.lineno + '行目）' : ''));
   });
-  $('qBtn').onclick = function () { $('tmain').style.display = 'none'; $('qpanel').style.display = 'block'; };
-  $('qBack').onclick = function () { $('qpanel').style.display = 'none'; $('tmain').style.display = ''; };
-  $('goBtn').onclick = function () {
-    if (B.ready) { B.start(); return; }
-    if (!B.errors.length) $('tstat').textContent = 'まだ読み込み中です。「準備ができました」と出てから押してください。';
+  // タイトル画面の小さな画面の切り替え
+  var panels = ['tmain', 'qpanel', 'pnew', 'pload'];
+  var show = function (id) { panels.forEach(function (p) { $(p).style.display = p === id ? (p === 'tmain' ? '' : 'block') : 'none'; }); };
+  var WAIT = 'まだ読み込み中です。「準備ができました」と出てから押してください。';
+  $('qBtn').onclick = function () { show('qpanel'); };
+  $('qBack').onclick = function () { show('tmain'); };
+  var backs = document.querySelectorAll('#title .back');
+  for (var i = 0; i < backs.length; i++) backs[i].onclick = function () { show('tmain'); };
+  // セーブデータがひとつも無ければ「続きから始める」は押せない
+  B.refreshCont = function () { $('contBtn').disabled = !(window.COL && COL.listSaves && COL.listSaves().length); };
+  // あたらしく始める: 名前とモードを決めて、空のセーブデータで始める
+  $('newBtn').onclick = function () { show('pnew'); $('nstat').textContent = ''; $('pname').focus(); };
+  var startNew = function (dev) {
+    if (!B.ready) { $('nstat').textContent = B.errors.length ? '起動できませんでした' : WAIT; return; }
+    COL.newSave($('pname').value, dev);
+    B.start();
   };
+  $('goBtn').onclick = function () { startNew(false); };
+  $('devBtn').onclick = function () { startNew(true); };
+  $('pname').addEventListener('keydown', function (e) { if (e.key === 'Enter') startNew(false); });
+  // 続きから始める: セーブデータの一覧
+  var two = function (n) { return ('0' + n).slice(-2); };
+  var when = function (t) { var d = new Date(t); return t ? d.getFullYear() + '/' + (d.getMonth() + 1) + '/' + d.getDate() + ' ' + two(d.getHours()) + ':' + two(d.getMinutes()) : '—'; };
+  function listSlots() {
+    var box = $('slots'), list = COL.listSaves();
+    box.textContent = '';
+    $('lstat').textContent = list.length ? '' : 'セーブデータがありません';
+    list.forEach(function (s) {
+      var row = document.createElement('div'), b = document.createElement('button'), del = document.createElement('button');
+      row.className = 'slot';
+      var nm = document.createElement('b'); nm.textContent = s.name;
+      b.appendChild(nm);
+      b.appendChild(document.createTextNode('　' + (s.dev ? '開発者モード' : '普通にプレイ')));
+      b.appendChild(document.createElement('br'));
+      b.appendChild(document.createTextNode('所持金 ' + COL.fmtCr(s.money) + '・' + (s.owned ? '豪邸あり（' + s.day + ' 日目）' : '家なし') + '・採掘 ' + s.trips + ' 回'));
+      b.appendChild(document.createElement('br'));
+      b.appendChild(document.createTextNode('最後に遊んだ日 ' + when(s.updated)));
+      b.onclick = function () {
+        if (!B.ready) { $('lstat').textContent = B.errors.length ? '起動できませんでした' : WAIT; return; }
+        COL.useSave(s.id); B.start();
+      };
+      del.className = 'del'; del.textContent = '削除';
+      del.onclick = function () {
+        if (!confirm('「' + s.name + '」のセーブデータを削除します。元に戻せません。よろしいですか？')) return;
+        COL.deleteSave(s.id); listSlots(); B.refreshCont();
+      };
+      row.appendChild(b); row.appendChild(del); box.appendChild(row);
+    });
+  }
+  $('contBtn').onclick = function () { show('pload'); listSlots(); };
 })();
 </script>
 <script src="vendor/three.min.js"></script>
 <script src="js/core.js"></script>
 <script src="js/terrain.js"></script>
+<script src="js/game.js"></script>
+<script>window.COL_BOOT.refreshCont();</script>
 <script src="js/rail.js"></script>
 <script src="js/world.js"></script>
 <script src="js/city.js"></script>
@@ -135,6 +254,8 @@
 <script src="js/vehicles.js"></script>
 <script src="js/life.js"></script>
 <script src="js/whales.js"></script>
+<script src="js/space.js"></script>
+<script src="js/mansion.js"></script>
 <script src="js/sound.js"></script>
 <script src="js/map.js"></script>
 <script src="js/app.js"></script>

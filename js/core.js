@@ -97,6 +97,10 @@
     };
   };
 
+  // 宇宙港のまわりの無重力の区域（ドックの中と、エレベーターの上の駅のあたり）。
+  //  ここでは「普通にプレイ」でも宙を漂って移動できる
+  COL.inHubZone = function (pos) { return pos[2] < 200 && Math.hypot(pos[0], pos[1]) < COL.HUB_R + 100; };
+
   const PITCH_MAX = Math.PI / 2 - 0.01;
 
   // 視線の向き（ピッチ込み）
@@ -175,7 +179,7 @@
 
     if (p.fly) {
       // ドックの中と入口付近はゆっくり漂う
-      const inDock = p.pos[2] < 40 && r0 < COL.HUB_R + 80;
+      const inDock = COL.inHubZone(p.pos);
       const sp = inDock ? (input.run ? S.dockFast : S.dock) : (input.run ? S.flyFast : S.fly);
       const dir = COL.lookDir(p);
       let t = V.add(V.add(V.mul(dir, input.f || 0), V.mul(right, input.s || 0)), V.mul(p.up, input.ud || 0));

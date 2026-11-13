@@ -340,6 +340,7 @@
     const flat = GL.material(Kit.cityVS, Kit.cityFS, null, { fog: false });
     const round = GL.material(Kit.cityVS, Kit.cityFS, null, { fog: false, defines: { ROUND: 1 } });
     shipMats = { box: flat, taper: flat, gable: flat, cyl: round, cone: round, ring: round, dome: round };
+    Kit.shipMats = shipMats;                      // 採掘船（space.js）でも使う
     buildDock(scene);
     buildElevators(scene);
   };

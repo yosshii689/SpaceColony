@@ -1,4 +1,5 @@
-// 全体マップ（M キー）: コロニーを周方向に開いた地図。クリックした場所へ移動できる
+// 全体マップ（M キー）: コロニーを周方向に開いた地図。開発者モードではクリックした場所へ移動できる
+//  モノレールに乗っているときは、駅をクリックするとその駅まで乗っていく（時間を飛ばす）
 //  横 = 軸方向（左が宇宙港、右がガラスの端）、縦 = 周方向（陸地A → 窓A → 陸地B → 窓B → 陸地C → 窓C）
 (function () {
   'use strict';
@@ -73,8 +74,20 @@
     }
     ctx.textAlign = 'left'; ctx.fillText('← 宇宙港', box.x, box.y - 14);
     ctx.textAlign = 'right'; ctx.fillText('ガラスの端 →', box.x + box.w, box.y - 14);
+    // 売地・自宅
+    {
+      const hxy = toXY(COL.landTheta(0, -1324), 29936);
+      ctx.fillStyle = '#ffd34d'; ctx.strokeStyle = '#3a2a00'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(hxy[0], hxy[1] - 8); ctx.lineTo(hxy[0] + 7, hxy[1]); ctx.lineTo(hxy[0] - 7, hxy[1]); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.fillRect(hxy[0] - 5, hxy[1], 10, 6); ctx.strokeRect(hxy[0] - 5, hxy[1], 10, 6);
+      ctx.textAlign = 'right'; ctx.fillStyle = '#ffe9a0';
+      ctx.fillText(COL.save && COL.save.owned ? '自宅' : '売地', hxy[0] - 10, hxy[1]);
+      ctx.fillStyle = '#eef4fb';
+    }
     ctx.textAlign = 'center';
-    ctx.fillText('クリックした場所へ移動（緑の丸 = モノレールの駅、水色の四角 = 宇宙港エレベーター）　M か Esc で閉じる', cv.width / 2, box.y + box.h + 22);
+    const how = COL.onTrain ? '駅をクリックすると、その駅まで乗っていく（時間を飛ばす）'
+              : COL.devMode ? 'クリックした場所へ移動' : '見るだけ（普通にプレイでは地図から移動できません）';
+    ctx.fillText(how + '（緑の丸 = モノレールの駅、水色の四角 = 宇宙港エレベーター、黄色の家 = 売地・自宅）　M か Esc で閉じる', cv.width / 2, box.y + box.h + 22);
     // 現在地と向き
     const c = COL.toCyl(p.pos), xy = toXY(c.theta, Math.max(0, c.z)), f = COL.frameAt(c.theta);
     const ang = Math.atan2(COL.V.dot(p.fwd, f.east), COL.V.dot(p.fwd, f.north));
@@ -100,6 +113,9 @@
       const mx = e.clientX, my = e.clientY;
       if (mx < box.x || mx > box.x + box.w || my < box.y || my > box.y + box.h) return;
       const p = playerRef;
+      // モノレールに乗っているとき: 選んだ駅まで時間を飛ばす
+      if (COL.onTrain) { if (hover) { COL.toggleMap(); onClose(); COL.trainSkip(hover.j); } return; }
+      if (!COL.devMode) return;                       // 普通にプレイでは地図から移動しない
       if (hover) { COL.warpToStation(p, hover.j); COL.toggleMap(); onClose(); return; }
       const z = Math.max(COL.TERRAIN_Z0 + 20, Math.min(L - 20, (mx - box.x) / box.sc)), theta = COL.THETA0 + (my - box.y) / box.sc / R;
       // 乗り物からは降ろして、地面（水の上なら水面）へ
