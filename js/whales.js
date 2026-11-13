@@ -278,6 +278,10 @@
     pGeo.attributes.position.needsUpdate = pGeo.attributes.alpha.needsUpdate = pGeo.attributes.size.needsUpdate = true;
   }
   COL.updateWhales = function (dt, p, camera, renderer) {
+    const on = COL.whalesOn !== 0;                  // 軽い画質ではクジラを出さず、動きの計算もしない
+    for (let i = 0; i < whales.length; i++) whales[i].mesh.visible = on;
+    pMat.visible = on;
+    if (!on) return;
     stepWhales(dt, p);
     pMat.uniforms.pscale.value = renderer.domElement.height / (2 * Math.tan(camera.fov * Math.PI / 360));
   };

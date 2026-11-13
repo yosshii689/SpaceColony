@@ -34,13 +34,52 @@
   #start td { padding: 3px 12px; }
   #start td:first-child { color: #9fd0ff; white-space: nowrap; }
   #start .go { margin-top: 18px; font-size: 17px; color: #fff; }
+  #title {
+    position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(#0a1426, #1d3a63 60%, #3a6a9a); color: #fff;
+  }
+  #title .box { text-align: center; min-width: 340px; max-width: 460px; padding: 36px 48px; background: rgba(10, 20, 35, 0.55); border-radius: 16px; }
+  #title h1 { margin: 0 0 8px; font-size: 38px; letter-spacing: 0.1em; }
+  #title p { margin: 4px 0 22px; color: #cfdcea; font-size: 15px; }
+  #title button {
+    display: block; width: 100%; margin: 10px 0 0; padding: 12px 20px; font: inherit; font-size: 19px; color: #fff;
+    background: #2f6fb5; border: 0; border-radius: 10px; cursor: pointer;
+  }
+  #title button:hover { background: #3f86d4; }
+  #title button.sub { background: #3a4a60; font-size: 17px; }
+  #title button.sub:hover { background: #4b5f7a; }
+  #title button.sel { outline: 3px solid #9fd0ff; }
+  #title #qpanel { display: none; }
+  #title .note { white-space: pre-line; }
+  #title .note { margin: 12px 0 6px; font-size: 13px; color: #b8c8da; text-align: left; line-height: 1.5; min-height: 3em; }
 </style>
 </head>
 <body>
 <pre id="hud"></pre>
 <div id="prompt"></div>
 <canvas id="map"></canvas>
-<div id="help">WASD 移動 ／ W二回押し 高速 ／ Space ジャンプ・上昇 ／ Space二回押し 飛行⇔徒歩 ／ Shift 下降・潜る ／ T 時刻早送り ／ V 描画距離 ／ R 解像度 ／ C 車を呼ぶ ／ E 乗る・降りる ／ M 地図 ／ P 文字を消す ／ K 画像を保存 ／ N 消音 ／ 1〜7 見どころへ移動 ／ 8 最寄り駅 9 次の駅 0 前の駅 ／ Esc 一時停止</div>
+<div id="help">WASD 移動 ／ W二回押し 高速 ／ Space ジャンプ・上昇 ／ Space二回押し 飛行⇔徒歩 ／ Shift 下降・潜る ／ T 時刻早送り ／ V 画質 ／ R 解像度 ／ C 車を呼ぶ ／ E 乗る・降りる ／ M 地図 ／ P 文字を消す ／ K 画像を保存 ／ N 消音 ／ 1〜7 見どころへ移動 ／ 8 最寄り駅 9 次の駅 0 前の駅 ／ Esc 一時停止</div>
+<div id="title"><div class="box">
+  <div id="tmain">
+    <h1>スペースコロニー散策</h1>
+    <p>直径 6.5 km ・ 全長 30 km のオニールシリンダー</p>
+    <button id="goBtn">ゲームスタート</button>
+    <button id="qBtn" class="sub">画質設定</button>
+    <div id="tstat" class="note" style="text-align:center;min-height:0">読み込み中…（古いパソコンでは時間がかかります）</div>
+    <div id="terr" class="note" style="display:none;color:#ffb4a8;min-height:0"></div>
+  </div>
+  <div id="qpanel">
+    <h1 style="font-size:28px">画質設定</h1>
+    <p>動きが重いときは軽いほうを選んでください</p>
+    <button class="sub" data-q="auto">自動（おすすめ）</button>
+    <button class="sub" data-q="0">最軽量（古いパソコン向け）</button>
+    <button class="sub" data-q="1">低</button>
+    <button class="sub" data-q="2">中</button>
+    <button class="sub" data-q="3">高</button>
+    <div class="note" id="qnote"></div>
+    <button id="qBack">もどる</button>
+  </div>
+</div></div>
 <div id="start"><div>
   <h1>スペースコロニー散策</h1>
   <p>直径 6.5 km ・ 全長 30 km のオニールシリンダー</p>
@@ -52,7 +91,7 @@
     <tr><td>Space を二回押し</td><td>飛行モード ⇔ 歩行モード</td></tr>
     <tr><td>Shift</td><td>飛行中の下降 ／ 泳いでいるときは潜る</td></tr>
     <tr><td>T</td><td>押している間、時刻を早送り（昼夜）</td></tr>
-    <tr><td>V</td><td>描画距離の切り替え（低・中・高）</td></tr>
+    <tr><td>V</td><td>画質の切り替え（最軽量・低・中・高）。遠くの描画・影・人や車の数が変わる</td></tr>
     <tr><td>R</td><td>解像度の切り替え（自動・100%・75%・50%）。自動は fps が足りないとき画素数を減らす</td></tr>
     <tr><td>C</td><td>車を目の前に呼ぶ（W 加速 ／ S 減速・後退 ／ A D ハンドル ／ Space ブレーキ、最高 180 km/h）</td></tr>
     <tr><td>E</td><td>車・モノレール・エレベーターに乗る、降りる</td></tr>
@@ -64,6 +103,28 @@
   </table>
   <p class="go">クリックして開始</p>
 </div></div>
+<script>
+// タイトル画面のボタンとエラー表示は、3D の準備（重い・失敗することがある）より前に動くようにしておく
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var B = window.COL_BOOT = { ready: false, titleOn: true, errors: [] };
+  B.fail = function (msg) {
+    B.errors.push(String(msg));
+    $('terr').style.display = 'block';
+    $('terr').textContent = 'エラー: ' + B.errors.slice(-3).join('\n');
+    $('tstat').textContent = '起動できませんでした。この画面の写真を撮って送ってもらえると直せます。';
+  };
+  window.addEventListener('error', function (ev) {
+    B.fail(ev.message + (ev.filename ? '（' + ev.filename.split('/').pop() + ' ' + ev.lineno + '行目）' : ''));
+  });
+  $('qBtn').onclick = function () { $('tmain').style.display = 'none'; $('qpanel').style.display = 'block'; };
+  $('qBack').onclick = function () { $('qpanel').style.display = 'none'; $('tmain').style.display = ''; };
+  $('goBtn').onclick = function () {
+    if (B.ready) { B.start(); return; }
+    if (!B.errors.length) $('tstat').textContent = 'まだ読み込み中です。「準備ができました」と出てから押してください。';
+  };
+})();
+</script>
 <script src="vendor/three.min.js"></script>
 <script src="js/core.js"></script>
 <script src="js/terrain.js"></script>

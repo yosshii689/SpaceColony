@@ -200,9 +200,11 @@
 
   function updateAgents(dt, lc, pz, night) {
     // ---- 車 ----
+    const sc = COL.lifeScale === undefined ? 1 : COL.lifeScale, carMax = Math.round(CARS * sc);
     for (let n = 0; n < CARS; n++) {
       const c = cars[n];
-      if (c.on && lc && c.i === lc.index) {
+      if (n >= carMax) c.on = false;
+      else if (c.on && lc && c.i === lc.index) {
         c.t += c.speed * c.sgn * dt;
         const p = agentUZ(c), dist = Math.hypot(p[0] - lc.u, p[1] - pz);
         c.check -= dt;
@@ -213,7 +215,7 @@
           if (!COL.isUrban(c.i, q[0], q[1]) && COL.solidTop(COL.landTheta(c.i, q[0]), q[1], COL.groundH(COL.landTheta(c.i, q[0]), q[1]) + 9) < -1e8) c.on = false;
         }
       } else c.on = false;
-      if (!c.on) respawn(c, lc, pz, 110, 520, false);
+      if (!c.on && n < carMax) respawn(c, lc, pz, 110, 520, false);
       if (!c.on) { hide(carD, n * 4, 4); continue; }
       const f = agentFrame(c), len = c.long ? 7.5 : 4.3, hgt = c.long ? 2.3 : 0.62;
       put(carD, n * 4, f.P, f.X, f.Y, f.Z, 0, 0.28, 0, c.long ? 2.3 : 1.8, hgt, len);
@@ -223,7 +225,7 @@
     }
     carD.mesh.instanceMatrix.needsUpdate = true;
     // ---- 住民（夜は少ない） ----
-    const active = Math.round(PEOPLE * (1 - 0.6 * night));
+    const active = Math.round(PEOPLE * (1 - 0.6 * night) * sc);
     for (let n = 0; n < PEOPLE; n++) {
       const m = people[n];
       if (n >= active) m.on = false;
@@ -386,9 +388,10 @@
   COL.updateLife = function (dt, p) {
     clock += dt;
     const c = COL.toCyl(p.pos), lc = c.z > COL.TERRAIN_Z0 ? COL.landCoord(c.theta) : null, night = COL.GL.U.night.value;
+    const lite = COL.lifeScale !== undefined && COL.lifeScale < 0.3;       // 最軽量: 鳥と魚は出さない
     updateAgents(dt, lc, c.z, night);
-    updateBirds(dt, lc, c.z, night);
-    updateFish(dt, lc, c.z);
+    updateBirds(dt, lc, c.z, lite ? 1 : night);
+    updateFish(dt, lite ? null : lc, c.z);
     if (COL.debugPeople && lc) {                       // 目の前に12人を横一列に並べて歩く姿勢を見る
       for (let n = 0; n < 12; n++) {
         const th = COL.landTheta(lc.index, lc.u - 6.6 + n * 1.2), z = c.z + 5.5, f = COL.frameAt(th);

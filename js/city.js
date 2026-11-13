@@ -47,6 +47,7 @@
   // 壁の種類: 0 オフィス（ガラス張り） 1 住まい（窓とバルコニー） 2 SF（暗いガラスと発光ライン）
   //           3 無地 4 低層部（1階は店のガラス） 5 発光体 6 戸建て（板張り） 7 車両（窓の帯）
   const cityFS = GL.FS_HEAD + GL.COMMON + GL.NOISE2 + GL.SHADOW + `
+    uniform float fx;
     varying vec3 vWorld, vN, vCol, vT, vB, vSize;
     varying vec2 vUV, vTop;
     varying vec4 vParm;
@@ -132,7 +133,7 @@
         float H = vSize.y, halfW = vSize.x;
         float fineK = clamp(1.0 - fwidth(vUV.y) / 0.8, 0.0, 1.0);     // 近いほど 1（細かい模様を描く）
         float thinK = clamp(1.0 - fwidth(vUV.y) / 0.12, 0.0, 1.0);    // 窓枠など、ごく細い線用
-        float roomK = clamp(1.0 - fwidth(vUV.y) / 0.25, 0.0, 1.0);    // 部屋の奥行きを描く距離
+        float roomK = clamp(1.0 - fwidth(vUV.y) / 0.25, 0.0, 1.0) * step(0.5, fx);    // 部屋の奥行きを描く距離
         vec2 cs = vec2(3.0, 3.75), lo = vec2(0.0, 0.30), hi = vec2(1.0, 0.97);
         float margin = 0.45, trans = 0.55, kind = 0.0, dayLit = 0.75, nightLit = 0.45, mull = 1.5, recess = 0.0, span = 4.0, refl = 0.22;
         vec3 wall = vCol * (0.94 + 0.12 * vnoise(uv / 1.9 + seed));
@@ -1606,13 +1607,26 @@
 
   // ================= 近くの区画だけ細かい物を出す =================
   const QUALITY = [
-    { name: '低', near: 380, shadow: 0, small: 2200 },
-    { name: '中', near: 650, shadow: 300, small: 3600 },
-    { name: '高', near: 1000, shadow: 440, small: 6000 },
+    // life: 住民・車・鳥・魚の数の割合 / res: 解像度の上限 / fx: 窓の部屋・水中の光の網目 / whales: クジラの有無
+    // far: これより遠くは描かず霧で隠す（0 = コロニー全体を描く） / tree: 木を細かい形で描く距離
+    { name: '最軽量', near: 260, shadow: 0, small: 400, life: 0.15, res: 0.5, fx: 0, whales: 0, far: 1000, tree: 90 },
+    { name: '低', near: 420, shadow: 0, small: 1200, life: 0.4, res: 0.75, fx: 0, whales: 1, far: 2500, tree: 140 },
+    { name: '中', near: 650, shadow: 300, small: 3600, life: 1, res: 1, fx: 1, whales: 1, far: 0, tree: 210 },
+    { name: '高', near: 1000, shadow: 440, small: 6000, life: 1, res: 1, fx: 1, whales: 1, far: 0, tree: 210 },
   ];
-  let qi = 1, sceneRef = null, rendererRef = null, tick = 1, started = false;
+  COL.QUALITIES = QUALITY;
+  let qi = 2, sceneRef = null, rendererRef = null, tick = 1, started = false;
   COL.qualityName = function () { return QUALITY[qi].name + (QUALITY[qi].shadow ? '・影あり' : '・影なし'); };
-  COL.cycleQuality = function () { qi = (qi + 1) % QUALITY.length; tick = 1; };
+  function applyQuality() {
+    const Q = QUALITY[qi];
+    U.fx.value = Q.fx; COL.lifeScale = Q.life; COL.whalesOn = Q.whales; COL.resCap = Q.res;
+    COL.drawFar = Q.far; COL.liteFog = Q.far ? 1.9 / Q.far : 0;              // 描く距離の端でほぼ霧になる濃さ
+    if (COL.setClouds) COL.setClouds(!Q.far);
+    if (COL.onQuality) COL.onQuality(Q);
+  }
+  COL.setQuality = function (n) { qi = Math.max(0, Math.min(QUALITY.length - 1, n)); tick = 1; applyQuality(); };
+  COL.getQuality = function () { return qi; };
+  COL.cycleQuality = function () { COL.setQuality((qi + 1) % QUALITY.length); };
 
   const chunks = new Map();          // 'i,cu,cz' → Group（中身が無い区画は null）
   const regionList = [];             // 建物の本体のまとまり（陸地 × 軸方向 1km）
@@ -1665,7 +1679,7 @@
       grp.userData.dist = dist;
       // 木は 210m より先では簡略な形にする
       const lod = grp.userData.lod;
-      for (let k = 0; k < lod.length; k++) { lod[k].hi.visible = dist < 210; lod[k].lo.visible = dist >= 210; }
+      for (let k = 0; k < lod.length; k++) { lod[k].hi.visible = dist < Q.tree; lod[k].lo.visible = dist >= Q.tree; }
     });
     // 建物の本体は近いまとまりから先に描く（奥のまとまりの、隠れた画素を計算しないで済む）
     for (let k = 0; k < regionList.length; k++) {
@@ -1673,10 +1687,14 @@
       let du = c.theta - COL.landCenter(g.i);
       du = (du - Math.round(du / TAU) * TAU) * R;
       g.dist = Math.hypot(Math.max(0, Math.abs(du) - COL.LAND_HW), c.z - g.z);
+      // まとまりの一番近い所までの距離（最軽量で、描く距離より遠いまとまりを隠すのに使う）
+      g.edge = Math.hypot(Math.max(0, Math.abs(du - g.u) - COL.LAND_HW / 3), Math.max(0, Math.abs(c.z - g.z) - 500), Math.max(0, c.h - 300));
       const ro = -10 + Math.min(9, Math.floor(g.dist / 500));
       for (let m = 0; m < g.grp.children.length; m++) g.grp.children[m].renderOrder = ro;
       for (let m = 0; m < g.small.children.length; m++) g.small.children[m].renderOrder = ro;
       g.small.visible = g.dist < Q.small;        // 戸建てなどの小さな建物は、遠くでは描かない
+      g.grp.visible = !Q.far || g.edge < Q.far;
+      if (!g.grp.visible) g.small.visible = false;
     }
     COL.updateTerrainLod(cam);
     started = true;
@@ -1744,17 +1762,18 @@
     initParts(renderer);
     COL.CityKit = { Bag: Bag, UNIT: UNIT, MAT: MAT, cityVS: cityVS, cityFS: cityFS, GLOW: GLOW, CONT: CONT, addSolid: addSolid };
     // 建物の本体を全部作る（軸方向 1km ごとにまとめる）
-    const regions = new Map();
-    const reg = function (i, z) {
-      const key = i + ',' + Math.floor(z / 1000);
-      if (!regions.has(key)) regions.set(key, { main: new Bag(), small: new Bag(), i: i, z: Math.floor(z / 1000) * 1000 + 500 });
+    const regions = new Map(), BAND = 2 * COL.LAND_HW / 3;
+    const reg = function (i, u, z) {
+      const bu = Math.max(0, Math.min(2, Math.floor((u + COL.LAND_HW) / BAND)));
+      const key = i + ',' + bu + ',' + Math.floor(z / 1000);
+      if (!regions.has(key)) regions.set(key, { main: new Bag(), small: new Bag(), i: i, u: -COL.LAND_HW + (bu + 0.5) * BAND, z: Math.floor(z / 1000) * 1000 + 500 });
       return regions.get(key);
     };
     // 街区の建物
     for (let i = 0; i < 3; i++) for (let bz = 14; bz < 240; bz++) for (let bu = -14; bu < 14; bu++) {
       const plan = planBlock(i, bu, bz);
       if (!plan || !plan.b.length) continue;
-      const g = reg(i, plan.cz);
+      const g = reg(i, plan.cu, plan.cz);
       emitMajor(plan, plan.small ? g.small : g.main);
     }
     const HW = COL.LAND_HW;
@@ -1763,7 +1782,7 @@
       for (let cz = 8; cz < 120; cz++) for (let cu = -7; cu < 7; cu++) {
         const u = cu * 250 + 125, z = cz * 250 + 125;
         if (Math.abs(u) > HW - 160 || COL.zoneOf(i, u, z) !== 'farm' || COL.waterSdf(i, u, z) < 70) continue;
-        const h = COL.noise2(cu * 7.3 + 0.5, cz * 3.1 + 0.5, 333 + i), r = COL.rng((cu * 131 + cz * 7 + 99991) >>> 0), bag = reg(i, z).small;
+        const h = COL.noise2(cu * 7.3 + 0.5, cz * 3.1 + 0.5, 333 + i), r = COL.rng((cu * 131 + cz * 7 + 99991) >>> 0), bag = reg(i, u, z).small;
         if (h < 0.22) {
           for (let k = 0; k < 6; k++) emitBuilding(i, makeBuilding(i, 'greenhouse', u, z - 35 + k * 14, 70, 10, 0, r()), bag);
         } else if (h < 0.30) {
@@ -1775,7 +1794,7 @@
       [8000, 22000].forEach(function (z) {
         [-1, 1].forEach(function (sd) {
           const u = sd * (HW - 140);
-          if (COL.waterSdf(i, u, z) > 40) emitBuilding(i, makeBuilding(i, 'wtower', u, z, 34, 34, 230, (z + sd + i) % 1000 / 1000), reg(i, z).main);
+          if (COL.waterSdf(i, u, z) > 40) emitBuilding(i, makeBuilding(i, 'wtower', u, z, 34, 34, 230, (z + sd + i) % 1000 / 1000), reg(i, u, z).main);
         });
       });
       // 橋: u 方向の道路が川・運河を横切る所
@@ -1790,7 +1809,7 @@
             start = null;
             if (u1 - u0 > 130 || !COL.isUrban(i, u0 - 4, z) || !COL.isUrban(i, u1 + 4, z)) continue;
             const top = Math.max(COL.groundH(COL.landTheta(i, u0), z), COL.groundH(COL.landTheta(i, u1), z)) + 0.2, uc = (u0 + u1) / 2, len = u1 - u0;
-            const bag = reg(i, z).main;
+            const bag = reg(i, uc, z).main;
             bag.add('box', i, uc, z, top - 1.1, len, 1.1, hw * 2, [0.24, 0.25, 0.27], 3, 21);
             for (let sd = -1; sd <= 1; sd += 2) {
               bag.add('box', i, uc, z + sd * (hw - 0.2), top, len, 1.1, 0.35, [0.78, 0.78, 0.76], 3, 22);
@@ -1810,10 +1829,10 @@
       g.main.build(grp, true);
       g.small.build(small, true);
       // 画面の外のまとまりは描かない（まとまり全体を包む球で判定）
-      const c = COL.toWorld(COL.landCenter(g.i), g.z, 150), sphere = new THREE.Sphere(new THREE.Vector3(c[0], c[1], c[2]), 2250);
+      const c = COL.toWorld(COL.landTheta(g.i, g.u), g.z, 150), sphere = new THREE.Sphere(new THREE.Vector3(c[0], c[1], c[2]), 1000);
       grp.children.concat(small.children).forEach(function (m) { m.geometry.boundingSphere = sphere; m.frustumCulled = true; });
       scene.add(grp); scene.add(small);
-      regionList.push({ grp: grp, small: small, i: g.i, z: g.z, dist: 0 });
+      regionList.push({ grp: grp, small: small, i: g.i, u: g.u, z: g.z, dist: 0, edge: 0 });
     });
     pierList();
 
@@ -1825,7 +1844,7 @@
   };
 
   COL.updateCity = function (dt, scene, camera) {
-    if (COL.QUALITY_START !== undefined) { qi = Math.max(0, Math.min(2, COL.QUALITY_START)); COL.QUALITY_START = undefined; }
+    if (COL.QUALITY_START !== undefined) { COL.setQuality(COL.QUALITY_START); COL.QUALITY_START = undefined; }
     tick += dt;
     if (tick > 0.15) { tick = 0; stream(camera.position); }
     renderShadow(camera);

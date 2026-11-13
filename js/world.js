@@ -20,6 +20,7 @@
     ambCol: { value: new THREE.Color(0.5, 0.55, 0.65) }, // 環境光
     cloudT: { value: 0 },                            // 雲の流れ
     time: { value: 0 },                              // 経過秒（水面のゆらぎ）
+    fx: { value: 1 },                                // 1=窓の部屋・水中の光の網目を描く / 0=描かない（軽い画質用）
     night: { value: 0 },                             // 夜の度合い（0=昼, 1=夜）。窓明かり・街灯
     shadowMap: { value: null },                      // 近くの建物と木の影（city.js が描く）
     shadowMat: { value: new THREE.Matrix4() },
@@ -129,7 +130,9 @@
 
   // 水面の揺らぎが海底に落とす光の網目。uv は 1 で一周する
   const GLSL_CAUSTIC = `
+    uniform float fx;
     float caustic(vec2 uv, float t) {
+      if (fx < 0.5) return 0.0;
       vec2 p = mod(uv * 6.2831853, 6.2831853) - 250.0;
       vec2 i = p;
       float c = 1.0, inten = 0.005;
@@ -380,6 +383,7 @@
       const t = terrainChunks[k], d = Math.hypot(t.x - cam.x, t.y - cam.y, t.z - cam.z);
       const g = d > 3800 ? t.far : t.near;
       if (t.mesh.geometry !== g) t.mesh.geometry = g;
+      t.mesh.visible = !COL.drawFar || d < COL.drawFar + 2000;     // 最軽量: 遠くの地形は描かない
     }
   };
 
@@ -717,8 +721,11 @@
     geo.rotateX(Math.PI / 2);
     const mat = material(vs, fs, { noiseMap: { value: null } }, { side: THREE.DoubleSide, transparent: true, depthWrite: false });
     mat.uniforms.noiseMap.value = noiseTexture();
+    const clouds = [];
+    COL.setClouds = function (on) { clouds.forEach(function (m) { m.visible = on; }); };
     [R - 1300, R - 1560].forEach(function (r) {
       const m = new THREE.Mesh(geo, mat);
+      clouds.push(m);
       m.scale.set(r, r, L);
       m.position.z = L / 2;
       m.rotation.z = 0.6;                    // 筒の継ぎ目を窓の上へずらす
@@ -785,7 +792,7 @@
     sceneRef.fog.color.copy(C_NIGHT).lerp(_c, day);
     // 水の中では近くしか見えない
     if (COL.underwater) sceneRef.fog.color.copy(COL.underwaterSea ? C_SEA : C_WATER).multiplyScalar(0.2 + 0.8 * day);
-    sceneRef.fog.density = COL.underwater ? (COL.underwaterSea ? 0.014 : 0.045) : COL.HAZE;
+    sceneRef.fog.density = COL.underwater ? (COL.underwaterSea ? 0.014 : 0.045) : (COL.liteFog || COL.HAZE);
     sceneRef.background.copy(sceneRef.fog.color);
   };
 

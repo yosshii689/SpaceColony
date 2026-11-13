@@ -112,7 +112,18 @@
       geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
       geo.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
       geo.computeBoundingSphere();
-      scene.add(new THREE.Mesh(geo, mat));
+      const mesh = new THREE.Mesh(geo, mat);
+      scene.add(mesh);
+      trackParts.push({ obj: mesh, c: geo.boundingSphere.center.toArray(), r: geo.boundingSphere.radius });
+    }
+  }
+  // 路線の部品は区間ごとに分けてある。最軽量では、描く距離より遠い区間を描かない
+  const trackParts = [];
+  function updateTrackLod(p) {
+    const far = COL.drawFar;
+    for (let k = 0; k < trackParts.length; k++) {
+      const t = trackParts[k];
+      t.obj.visible = !far || Math.hypot(p[0] - t.c[0], p[1] - t.c[1], p[2] - t.c[2]) - t.r < far;
     }
   }
   // 路線に沿った向きで箱などを置く。X=進行方向の右（Rw）, Y=上, Z=進行方向
@@ -133,10 +144,12 @@
   }
   const PALE = [0.86, 0.87, 0.88], GLASSC = [0.60, 0.70, 0.76], FLOORC = [0.74, 0.74, 0.72];
   function buildTrackParts(scene) {
-    const bag = new Kit.Bag();
+    // 区間（3km）ごとに分けて作る（画面の外や遠くの区間を描かずに済む）
+    const SEG = 3000, bags = [];
+    const bagAt = function (s) { const k = Math.floor(s / SEG); return bags[k] || (bags[k] = new Kit.Bag()); };
     // 橋脚: 50m ごとに1本柱と、2本の桁を支える横梁
     for (let k = 0; k < rl.N; k += 5) {
-      const s = k * rl.ds, a = rl.at(s), th = COL.THETA0 + a.x / R, w = COL.waterAt(th, a.z);
+      const s = k * rl.ds, a = rl.at(s), th = COL.THETA0 + a.x / R, w = COL.waterAt(th, a.z), bag = bagAt(s);
       const g = (w ? COL.groundH(th, a.z) : a.g) - 1, top = a.h - 2.5;
       if (top - g < 2) continue;
       alongTrack(bag, 'box', s, 0, g - a.h, 1.6, top - g, 1.6, [0.66, 0.67, 0.69], 3, 1);
@@ -144,7 +157,7 @@
     }
     // 駅
     rl.stations.forEach(function (st) {
-      const s = st.s, a = rl.at(s), drop = a.g - a.h, L = PLAT_HALF * 2;
+      const s = st.s, a = rl.at(s), drop = a.g - a.h, L = PLAT_HALF * 2, bag = bagAt(s);
       for (let sd = -1; sd <= 1; sd += 2) {
         const mid = sd * (PLAT_IN + PLAT_OUT) / 2, W = PLAT_OUT - PLAT_IN;
         // ホームの床と、その下の柱
@@ -200,9 +213,20 @@
       alongTrack(bag, 'box', s, 0, ROOF + 0.3, 2 * (PLAT_OUT + 1.4), 0.12, L + 2.4, [0.80, 0.81, 0.82], 3, 2);
       stationSolid(st, -(PLAT_OUT + 1.2), PLAT_OUT + 1.2, -PLAT_HALF - 1, PLAT_HALF + 1, ROOF, ROOF + 0.42);
     });
-    const grp = new THREE.Group();
-    bag.build(grp, true);
-    scene.add(grp);
+    bags.forEach(function (bag, k) {
+      if (!bag) return;
+      const grp = new THREE.Group();
+      bag.build(grp, true);
+      // 区間を包む球（路線の上の点から求める。柱や駅の塔のぶん少し大きめ）
+      const pts = [];
+      for (let q = 0; q <= 12; q++) pts.push(rl.world(Math.min(rl.N * rl.ds, (k + q / 12) * SEG), 0, 0).pos);
+      const c = [0, 1, 2].map(function (j) { return pts.reduce(function (t, p) { return t + p[j]; }, 0) / pts.length; });
+      const r = pts.reduce(function (m, p) { return Math.max(m, Math.hypot(p[0] - c[0], p[1] - c[1], p[2] - c[2])); }, 0) + 120;
+      const sphere = new THREE.Sphere(new THREE.Vector3(c[0], c[1], c[2]), r);
+      grp.children.forEach(function (m) { m.geometry.boundingSphere = sphere; m.frustumCulled = true; });
+      scene.add(grp);
+      trackParts.push({ obj: grp, c: c, r: r });
+    });
   }
 
   // 列車: 1両 12m。外から見た車体と、中から見た内装（壁・窓枠・ドア・座席・手すり・照明）。近くを走る編成のぶんだけ用意して使い回す
@@ -392,6 +416,7 @@
   COL.updateVehicles = function (dt, p, use, call, cam) {
     clock += dt;
     updateTrains(cam);
+    updateTrackLod(cam);
     if (call) summon(p);
     if (carMsgT > 0) carMsgT -= dt;
     // ---- 車 ----

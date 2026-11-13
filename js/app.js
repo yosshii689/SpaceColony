@@ -1,13 +1,42 @@
 // 起動・入力・メインループ
-(function () {
+//  タイトル画面を先に表示してから、重い準備を始める（準備中もボタンが反応するように）
+function appMain() {
   'use strict';
-  const COL = window.COL, V = COL.V;
+  const COL = window.COL, V = COL.V, BOOT = window.COL_BOOT;
   const $ = function (id) { return document.getElementById(id); };
 
   const q = new URLSearchParams(location.search);
+  // GPU の名前（画質の自動選択と、画質設定の画面に出す）。WebGL が使えなければここで止める
+  const GPU = (function () {
+    try {
+      const c = document.createElement('canvas'), gl = c.getContext('webgl') || c.getContext('experimental-webgl');
+      if (!gl) return null;
+      const ext = gl.getExtension('WEBGL_debug_renderer_info');
+      const n = String(ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER));
+      const lose = gl.getExtension('WEBGL_lose_context');
+      if (lose) lose.loseContext();
+      return n;
+    } catch (e) { return null; }
+  })();
+  if (GPU === null) throw new Error('WebGL（3D 描画）が使えません。ブラウザの設定で「ハードウェアアクセラレーション（グラフィック アクセラレーション）」を有効にしてください。');
+  function detectQuality() {
+    if (/SwiftShader|llvmpipe|softpipe|Basic Render|Software/i.test(GPU)) return 0;     // GPU を使えていない
+    if (/NVIDIA|GeForce|Radeon RX|Radeon Pro|Arc\(?TM\)? [AB]\d/i.test(GPU)) return 3;
+    // 2010〜2013 年ごろの Intel 内蔵 GPU（HD Graphics 無印・2000・3000・2500・4000 など）は最軽量
+    if (/Intel/i.test(GPU) && /HD Graphics(\s*\(?(P?[234]000|2500|Family)\)?)?\s*(Direct3D|\)|$|\/)/i.test(GPU)) return 0;
+    if (/Intel/i.test(GPU) && /HD Graphics|UHD Graphics 6\d\d|Iris.*(5\d\d|6[0-3]\d)|Mesa (DRI )?Intel/i.test(GPU)) return 1;   // 古い内蔵 GPU
+    return 2;
+  }
+  let savedMode = 'auto';
+  try { savedMode = localStorage.getItem('colQualityMode') || 'auto'; } catch (e) {}
+  if (!/^(auto|[0-3])$/.test(savedMode)) savedMode = 'auto';
+  // 軽い画質（最軽量・低）では、縁のギザギザを消す処理（アンチエイリアス）を使わない。これは作るときにしか決められない
+  const resolveMode = function (m) { return m === 'auto' ? detectQuality() : parseInt(m, 10); };
+  const AA = q.get('q') ? parseInt(q.get('q'), 10) >= 2 : resolveMode(savedMode) >= 2;
+
   // 奥行きの対数バッファは「隠れた画素も全部計算する」原因になるので使わない（?logz=1 で元に戻せる）
-  const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: q.get('logz') === '1', powerPreference: 'high-performance' });
-  const baseDpr = Math.min(window.devicePixelRatio || 1, 2);
+  const renderer = new THREE.WebGLRenderer({ antialias: AA, logarithmicDepthBuffer: q.get('logz') === '1', powerPreference: 'high-performance' });
+  const baseDpr = AA ? Math.min(window.devicePixelRatio || 1, 2) : 1;
   renderer.setPixelRatio(baseDpr);
   document.body.appendChild(renderer.domElement);
   const scene = new THREE.Scene();
@@ -18,6 +47,55 @@
   COL.buildVehicles(scene);
   COL.buildLife(scene);
   COL.buildWhales(scene);
+
+  // ---- 画質の設定（タイトル画面で選ぶ。localStorage に覚える） ----
+  let qAuto = true;
+  const QNOTE = {
+    auto: 'パソコンに合わせて選び、重いときは自動で軽くします。',
+    0: '遠くを描かず、影・窓の中・水中の光の網目を切り、人や車を大きく減らし、クジラ・鳥・魚を出しません。解像度も下げます。',
+    1: '描く距離を短くし、影を切り、人や車を半分にします。',
+    2: '標準の画質です。',
+    3: '遠くまで描き、影も広く出します。',
+  };
+  function chooseQuality(mode) {
+    qAuto = mode === 'auto';
+    try { localStorage.setItem('colQualityMode', String(mode)); } catch (e) {}
+    COL.setQuality(resolveMode(String(mode)));
+    refreshQButtons();
+  }
+  function refreshQButtons() {
+    const cur = qAuto ? 'auto' : String(COL.getQuality());
+    const bs = document.querySelectorAll('#qpanel [data-q]');
+    for (let k = 0; k < bs.length; k++) bs[k].classList.toggle('sel', bs[k].getAttribute('data-q') === cur);
+    $('qnote').textContent = QNOTE[cur] + '\n（このパソコンの GPU: ' + GPU + '）';
+  }
+  const qbs = document.querySelectorAll('#qpanel [data-q]');
+  for (let k = 0; k < qbs.length; k++) {
+    const b = qbs[k];
+    b.addEventListener('click', function (e) {
+      e.stopPropagation();
+      const m = b.getAttribute('data-q');
+      // アンチエイリアスの有無が変わるときは、作り直すためにページを読み込み直す
+      if ((resolveMode(m) >= 2) !== AA) {
+        try { localStorage.setItem('colQualityMode', m); } catch (err) {}
+        $('qnote').textContent = '画質を切り替えています…';
+        setTimeout(function () { location.reload(); }, 50);
+        return;
+      }
+      chooseQuality(m);
+    });
+  }
+  BOOT.start = function () {
+    BOOT.titleOn = false;
+    $('title').style.display = 'none';
+    COL.initSound(); renderer.domElement.requestPointerLock();
+  };
+  // 最軽量: 描く距離の先は霧で隠し、カメラもそこまでしか描かない
+  COL.onQuality = function (Q) {
+    reapplyRes();
+    const far = Q.far ? Q.far * 1.15 : 60000;
+    if (camera.far !== far) { camera.far = far; camera.updateProjectionMatrix(); }
+  };
 
   function resize() {
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -70,7 +148,7 @@
       else { jumpQueued = true; lastSpace = t; }
     }
     if (e.code === 'KeyF') { player.fly = !player.fly; }
-    if (e.code === 'KeyV') COL.cycleQuality();
+    if (e.code === 'KeyV') { qAuto = false; COL.cycleQuality(); try { localStorage.setItem('colQualityMode', String(COL.getQuality())); } catch (err) {} }
     if (e.code === 'KeyR') { resMode = (resMode + 1) % RES_MODES.length; applyRes(RES_MODES[resMode] || 1); resCeil = 1; }
     // 数字キーで見どころへ移動
     if (e.code === 'KeyE') usePressed = true;
@@ -110,27 +188,40 @@
     if (!locked()) return;
     mouseX += e.movementX; mouseY += e.movementY;
   });
+  $('start').style.display = 'none';
   $('start').addEventListener('click', function () { COL.initSound(); renderer.domElement.requestPointerLock(); });
   renderer.domElement.addEventListener('click', function () { if (!locked()) renderer.domElement.requestPointerLock(); });
   document.addEventListener('pointerlockchange', function () {
-    $('start').style.display = (locked() || COL.mapOpen()) ? 'none' : '';
+    $('start').style.display = (locked() || COL.mapOpen() || $('title').style.display !== 'none') ? 'none' : '';
   });
-  if (q.get('auto') === '1') $('start').style.display = 'none';
+  if (q.get('auto') === '1') { $('start').style.display = 'none'; $('title').style.display = 'none'; BOOT.titleOn = false; }
 
   // ---- 解像度の自動調整: fps が足りないときは描く画素数を減らす（R キーで 自動 / 100% / 75% / 50%） ----
   const RES_MODES = [0, 1, 0.75, 0.5];           // 0 = 自動
   let resMode = q.get('auto') === '1' ? 1 : 0, resScale = 1, resCeil = 1, resHold = 0, accT = 0, accN = 0;
+  function reapplyRes() {                        // 画質の上限が変わったとき
+    const cur = resMode === 0 ? Math.max(resScale, 0.5) : RES_MODES[resMode];
+    resScale = -1; resCeil = 1; applyRes(cur);
+  }
   function applyRes(sc) {
+    sc = Math.min(sc, COL.resCap || 1);
     if (sc === resScale) return;
     resScale = sc;
     renderer.setPixelRatio(baseDpr * resScale);
   }
+  let lowStreak = 0;
   function autoRes(rawDt) {
-    if (resMode !== 0 || rawDt > 0.5 || !locked()) { accT = accN = 0; return; }
+    if (rawDt > 0.5 || !locked()) { accT = accN = 0; return; }
     accT += rawDt; accN++;
     if (accT < 1) return;
     const f = accN / accT;
-    accT = accN = 0; resHold--;
+    accT = accN = 0;
+    // 画質が「自動」で、解像度を下げ切っても 30fps に届かない状態が続くなら、画質をひとつ軽くする
+    if (qAuto && f < 30 && (resMode !== 0 || resScale <= 0.62 * (COL.resCap || 1) + 0.02) && COL.getQuality() > 0) {
+      if (++lowStreak >= 4) { lowStreak = 0; COL.setQuality(COL.getQuality() - 1); }
+    } else lowStreak = 0;
+    if (resMode !== 0) return;
+    resHold--;
     if (f < 50) {
       // 上げた直後に足りなくなったら、その手前を当面の上限にする
       resCeil = Math.max(0.5, resScale * 0.92);
@@ -143,6 +234,8 @@
       resHold = 3;
     }
   }
+
+  chooseQuality(savedMode);
 
   const SENS = 0.0022;
   function readInput() {
@@ -179,7 +272,7 @@
       '重力　 ' + (COL.gravityAt(c.r) / COL.G).toFixed(2) + ' G\n' +
       '速度　 ' + sp.toFixed(0) + ' km/h\n' +
       '時刻　 ' + ('0' + Math.floor(COL.clock)).slice(-2) + ':' + ('0' + Math.floor(COL.clock % 1 * 60)).slice(-2) + '\n' +
-      '描画　 ' + COL.qualityName() + '（V）　解像度 ' + (resMode === 0 ? '自動 ' : '') + Math.round(resScale * 100) + '%（R）\n' +
+      '描画　 ' + COL.qualityName() + (qAuto ? '（自動）' : '') + '（V）　解像度 ' + (resMode === 0 ? '自動 ' : '') + Math.round(resScale * 100) + '%（R）\n' +
       '負荷　 ' + (renderer.info.render.triangles / 1e6).toFixed(2) + ' 百万三角形・' + renderer.info.render.calls + ' 回\n' +
       'モード ' + (COL.vehicleSpeedNote() || (player.fly ? '飛行' : player.swim ? '水泳' : '徒歩')) + (sprint ? '（高速）' : '') + '　' + fps.toFixed(0) + ' fps';
   }
@@ -196,7 +289,36 @@
   }
 
   let last = performance.now();
+  let benchN = 0, benchT = 0;
   function frame(now) {
+    if (BOOT.titleOn) { last = now; requestAnimationFrame(frame); return; }
+    if (q.get('bench')) {                                 // 確認用: 1フレームの実時間を測る（?bench=1）
+      if (++benchN === 1) {
+        for (let k = 0; k < 4; k++) { COL.updateCity(0.2, scene, camera); COL.updateLife(0.05, player); COL.updateWhales(0.05, player, camera, renderer); }
+        const gl = renderer.getContext(), px = new Uint8Array(4);
+        benchT = performance.now();
+        for (let k = 0; k < 8; k++) { renderer.render(scene, camera); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); }
+        const d = document.createElement('div');
+        d.style.cssText = 'position:fixed;right:10px;top:10px;background:#000;color:#ff0;font:20px monospace;padding:6px;z-index:99';
+        d.textContent = 'BENCH ' + ((performance.now() - benchT) / 8).toFixed(1) + ' ms/frame ' + renderer.info.render.calls + ' calls ' + (renderer.info.render.triangles / 1e6).toFixed(2) + ' Mtri';
+        document.body.appendChild(d); console.log(d.textContent);
+        if (q.get('bench') === '2') {                     // 部品ごとの重さ（その部品だけを描いた時間）
+          const kids = scene.children.filter(function (c) { return c.visible; }), vis = kids.map(function () { return true; }), res = [];
+          kids.forEach(function (c) { c.visible = false; });
+          const t0 = performance.now(); for (let k = 0; k < 3; k++) { renderer.render(scene, camera); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); }
+          const base = (performance.now() - t0) / 3;
+          kids.forEach(function (c, i) {
+            c.visible = true;
+            const t1 = performance.now(); for (let k = 0; k < 3; k++) { renderer.render(scene, camera); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); }
+            res.push([(performance.now() - t1) / 3 - base, i, c.type, c.name || '', c.children.length, renderer.info.render.triangles]);
+            c.visible = false;
+          });
+          kids.forEach(function (c, i) { c.visible = vis[i]; });
+          res.sort(function (a, b) { return b[0] - a[0]; });
+          console.log('BENCHPARTS base ' + base.toFixed(1) + ' | ' + res.slice(0, 14).map(function (r) { return r[0].toFixed(1) + 'ms #' + r[1] + ' ' + r[2] + ' ch' + r[4] + ' tri' + r[5]; }).join(' | '));
+        }
+      }
+    }
     autoRes((now - last) / 1000);
     const dt = Math.max(0, Math.min(0.05, (now - last) / 1000));
     last = now;
@@ -234,5 +356,13 @@
     updateHud(dt);
     requestAnimationFrame(frame);
   }
+  // 準備の終わり: シェーダーを先に作っておく（始めた直後に固まらないように）
+  updateCamera();
+  try { renderer.compile(scene, camera); } catch (e) {}
+  BOOT.ready = true;
+  if (!BOOT.errors.length) $('tstat').textContent = '準備ができました';
   requestAnimationFrame(frame);
-})();
+}
+setTimeout(function () {
+  try { appMain(); } catch (e) { window.COL_BOOT.fail(e && e.message ? e.message : e); }
+}, 30);
