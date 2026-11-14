@@ -1495,9 +1495,87 @@
       }
     });
   }
+  // 四角形のまわりを囲む4本の細い箱（out: 壁から外へ出す量、t: 厚み）
+  function ring4(bag, i, cu, cz, y, w, d, out, t, hh, col, style, seed, glow, gi) {
+    const ow = w / 2 + out - t / 2, od = d / 2 + out - t / 2;
+    bag.add('box', i, cu, cz - od, y, w + 2 * out, hh, t, col, style, seed, glow, gi);
+    bag.add('box', i, cu, cz + od, y, w + 2 * out, hh, t, col, style, seed, glow, gi);
+    bag.add('box', i, cu - ow, cz, y, t, hh, d + 2 * out - 2 * t, col, style, seed, glow, gi);
+    bag.add('box', i, cu + ow, cz, y, t, hh, d + 2 * out - 2 * t, col, style, seed, glow, gi);
+  }
+  const GARDEN = [0.26, 0.46, 0.22];
+  // 高い建物の頂部の飾り（当たり判定なし。建物の形は変えない）
+  function emitCrown(i, b, bag) {
+    if (!(b.arche === 'office' || b.arche === 'resi' || b.arche === 'hotel') || b.h < 40) return;
+    let top = null;
+    b.M.forEach(function (m) { if (m.solid && (m.kind === 'box' || m.kind === 'taper')) top = m; });
+    if (!top) return;
+    const r = COL.rng(Math.floor(b.seed * 1e6) + 911), v = r(), gi = Math.floor(r() * 3), band = r() < 0.55;
+    const y = b.base + top.y + top.h, cu = b.u + top.ox, cz = b.z + top.oz, w = top.w, d = top.d, mn = Math.min(w, d);
+    const metal = FRAME[5];
+    if (top.kind === 'taper') {
+      // 先細りの頂部: 光る台座と細い尖塔
+      bag.add('box', i, cu, cz, y, w * 0.58 + 0.8, 0.6, d * 0.58 + 0.8, GLOW[gi], 5, 0, 0.9, gi);
+      bag.add('taper', i, cu, cz, y + 0.6, 2.4, b.h * 0.10 + 6, 2.4, metal, 3, 3);
+      return;
+    }
+    if (b.arche === 'office') {
+      if (band) ring4(bag, i, cu, cz, y - 1.15, w, d, 0.22, 0.22, 0.38, GLOW[gi], 5, 0, 0.85, gi);        // 屋上の縁の下の光の帯
+      if (v < 0.28) {
+        // 開いた枠の冠: 四隅の柱と、その上をつなぐ梁
+        const ch = 6 + mn * 0.12;
+        for (let q = 0; q < 4; q++) bag.add('box', i, cu + (q & 1 ? 1 : -1) * (w / 2 - 0.5), cz + (q & 2 ? 1 : -1) * (d / 2 - 0.5), y, 1.0, ch, 1.0, metal, 3, 36);
+        ring4(bag, i, cu, cz, y + ch - 0.9, w, d, 0, 1.0, 0.9, metal, 3, 36);
+        ring4(bag, i, cu, cz, y + ch * 0.5, w, d, -0.25, 0.3, 0.3, metal, 3, 36);
+        bag.add('box', i, cu, cz, y, w * 0.5, ch * 0.6, d * 0.5, [0.42, 0.44, 0.47], 3, 37);
+      } else if (v < 0.52) {
+        // 斜めに絞ったガラスの冠と尖塔
+        const ch = 5 + mn * 0.18;
+        bag.add('taper', i, cu, cz, y, w * 0.92, ch, d * 0.92, top.col, 0, Math.floor(b.seed * 50));
+        bag.add('box', i, cu, cz, y + ch, w * 0.92 * 0.58 + 0.5, 0.45, d * 0.92 * 0.58 + 0.5, GLOW[gi], 5, 0, 0.8, gi);
+        if (b.h > 110) bag.add('taper', i, cu, cz, y + ch + 0.45, 1.8, 14 + b.h * 0.08, 1.8, metal, 3, 3);
+      } else if (v < 0.74 && mn > 18) {
+        // ヘリポート
+        const pr = mn * 0.56;
+        bag.add('cyl', i, cu, cz, y + 1.6, pr, 0.5, pr, [0.30, 0.32, 0.35], 3, 6);
+        bag.add('cyl', i, cu, cz, y, pr * 0.35, 1.6, pr * 0.35, [0.46, 0.47, 0.50], 3, 6);
+        bag.add('ring', i, cu, cz, y + 2.15, pr * 0.86, pr * 0.86, pr * 0.86, GLOW[2], 5, 0, 1.0, 2);
+        bag.add('box', i, cu, cz, y + 2.1, pr * 0.34, 0.06, pr * 0.07, WHITE, 5, 0, 0.5);
+        bag.add('box', i, cu - pr * 0.14, cz, y + 2.1, pr * 0.07, 0.06, pr * 0.34, WHITE, 5, 0, 0.5);
+        bag.add('box', i, cu + pr * 0.14, cz, y + 2.1, pr * 0.07, 0.06, pr * 0.34, WHITE, 5, 0, 0.5);
+      } else {
+        // 機械室の塔屋と、横に張り出した ひさしの屋根
+        const ch = 4.5 + r() * 3;
+        bag.add('box', i, cu, cz, y, w * 0.56, ch, d * 0.56, [0.50, 0.52, 0.55], 3, 37);
+        bag.add('box', i, cu, cz, y + ch, w * 0.74, 0.4, d * 0.74, metal, 3, 38);
+        ring4(bag, i, cu, cz, y + ch - 0.5, w * 0.74, d * 0.74, 0, 0.18, 0.3, GLOW[gi], 5, 0, 0.7, gi);
+      }
+    } else if (b.arche === 'resi') {
+      // マンション: 屋上の庭（芝・木立・あずまや）か、最上階のペントハウス
+      if (v < 0.5) {
+        bag.add('box', i, cu, cz, y + 0.02, w * 0.78, 0.22, d * 0.66, GARDEN, 3, 39);
+        for (let q = 0; q < 5; q++) {
+          const s = 3.2 + r() * 2.6, tu = cu + (r() - 0.5) * w * 0.66, tz = cz + (r() - 0.5) * d * 0.5;
+          bag.add('box', i, tu, tz, y, 0.35, s * 0.5, 0.35, [0.36, 0.27, 0.20], 3, 39);
+          bag.add('shrubLo', i, tu, tz, y + s * 0.25, s * 0.62, s * 0.62, s * 0.62, [1.0 + 0.3 * r(), 1.05, 0.9], 0, 0, 0, 0, r() * TAU);      // 遠くからも見えるので、面の少ない形で
+        }
+        bag.add('box', i, cu + w * 0.28, cz, y + 2.7, 4.6, 0.2, 3.6, WHITE, 3, 38);
+        for (let q = 0; q < 4; q++) bag.add('box', i, cu + w * 0.28 + (q & 1 ? 2 : -2), cz + (q & 2 ? 1.5 : -1.5), y, 0.18, 2.7, 0.18, WHITE, 3, 38);
+      } else {
+        bag.add('box', i, cu - w * 0.12, cz, y, w * 0.52, 3.3, d * 0.62, WHITE, 6, Math.floor(b.seed * 50) + 3);
+        bag.add('box', i, cu - w * 0.12, cz, y + 3.3, w * 0.60, 0.3, d * 0.78, DARK, 3, 38);
+        bag.add('box', i, cu + w * 0.30, cz, y + 0.02, w * 0.26, 0.2, d * 0.6, [0.52, 0.40, 0.28], 3, 39);
+      }
+    } else {
+      // ホテル: 屋上のプールとデッキ
+      bag.add('box', i, cu, cz, y + 0.02, w * 0.8, 0.25, d * 0.7, [0.60, 0.50, 0.38], 3, 39);
+      bag.add('box', i, cu - w * 0.12, cz, y + 0.1, w * 0.42, 0.22, d * 0.36, [0.20, 0.62, 0.80], 5, 0, 0.30);
+      if (band) ring4(bag, i, cu, cz, y - 1.15, w, d, 0.22, 0.22, 0.38, GLOW[2], 5, 0, 0.8, 2);
+    }
+  }
   function emitMajor(plan, bag) {
     const i = plan.i;
-    plan.b.forEach(function (b) { emitBuilding(i, b, bag); });
+    plan.b.forEach(function (b) { emitBuilding(i, b, bag); emitCrown(i, b, bag); });
     if (plan.bridge) {
       const g = plan.bridge, col = FRAME[5];
       [g.y, g.y2].forEach(function (y) {
@@ -1541,8 +1619,121 @@
   // ---- 建物の外壁の作り込み（近くだけ）: マンションの連続バルコニー、オフィスの縦ルーバー ----
   const SLAB = [0.82, 0.82, 0.80], FINC = [0.80, 0.81, 0.82];
   const PARAPET = [[0.86, 0.86, 0.84], [0.66, 0.75, 0.80], [0.80, 0.78, 0.74], [0.56, 0.60, 0.64]];
+  const AWNING = [[0.74, 0.20, 0.17], [0.14, 0.36, 0.30], [0.18, 0.28, 0.52], [0.86, 0.80, 0.68], [0.88, 0.56, 0.14], [0.24, 0.24, 0.27], [0.55, 0.16, 0.30]];
+  const GLASSR = [0.70, 0.82, 0.86];
+  // 建物の飾り（近くだけ）: 段々になった所の空中庭園、日よけの横の庇、1階の店のひさし・袖看板・柱、角の付け柱、バルコニーの植木
+  function emitOrnament(i, b, bag, fin) {
+    const r = COL.rng(Math.floor(b.seed * 1e6) + 577);
+    const big = !!BIGARCH[b.arche], stoneC = [0.80, 0.78, 0.73];
+    for (let k = 0; k < b.M.length; k++) {
+      const m = b.M[k];
+      if (!m.solid || m.kind !== 'box') continue;
+      const y0 = b.base + m.y, cu = b.u + m.ox, cz = b.z + m.oz, yt = y0 + m.h;
+      // ---- 上の階が引っ込んでいる所: 空中庭園（芝・生垣・木立）とガラスの手すり ----
+      const up = b.M[k + 1];
+      if (up && up.solid && (up.kind === 'box' || up.kind === 'taper' || up.kind === 'cyl') && Math.abs(up.y - (m.y + m.h)) < 0.01 && !up.ox && !up.oz && m.h > 4) {
+        const lw = (m.w - up.w) / 2, ld = (m.d - up.d) / 2;
+        if (lw > 1.6 && ld > 1.6) {
+          ring4(bag, i, cu, cz, yt, m.w, m.d, -0.12, 0.08, 1.1, GLASSR, 3, 45);
+          ring4(bag, i, cu, cz, yt + 1.1, m.w, m.d, -0.08, 0.16, 0.06, [0.30, 0.31, 0.33], 3, 45);
+          const gw = Math.min(lw - 0.9, 2.2), gd = Math.min(ld - 0.9, 2.2);
+          // 生垣の帯（上の階の壁ぞい）
+          bag.add('hedge', i, cu, cz - up.d / 2 - 0.5 - gd / 2, yt - 0.05, up.w, 0.75, gd, [1, 1, 1], 0, 0);
+          bag.add('hedge', i, cu, cz + up.d / 2 + 0.5 + gd / 2, yt - 0.05, up.w, 0.75, gd, [1, 1, 1], 0, 0);
+          bag.add('hedge', i, cu - up.w / 2 - 0.5 - gw / 2, cz, yt - 0.05, gw, 0.75, up.d, [1, 1, 1], 0, 0);
+          bag.add('hedge', i, cu + up.w / 2 + 0.5 + gw / 2, cz, yt - 0.05, gw, 0.75, up.d, [1, 1, 1], 0, 0);
+          // 四隅の木と、ところどころの低木
+          if (lw > 3 && ld > 3) for (let q = 0; q < 4; q++) {
+            const tu = cu + (q & 1 ? 1 : -1) * (m.w / 2 - lw / 2), tz = cz + (q & 2 ? 1 : -1) * (m.d / 2 - ld / 2), s = Math.min(1.0, 0.28 + lw * 0.06);
+            bag.add('box', i, tu, tz, yt, Math.min(lw, ld) * 0.62, 0.5, Math.min(lw, ld) * 0.62, [0.70, 0.69, 0.66], 3, 6);
+            // 木は重いので、いちばん下の段の対角の2か所だけ。ほかは大きめの低木
+            if (k === 0 && (q === 0 || q === 3)) bag.add(r() < 0.5 ? 'broad' : 'broad2', i, tu, tz, yt + 0.3, s, s, s, pick(TREE_TINT, r() * r()), 0, 0, 0, 0, r() * TAU);
+            else bag.add('shrub', i, tu, tz, yt + 0.35, 1.5, 1.6, 1.5, pick(SHRUB_TINT, r()), 0, 0, 0, 0, r() * TAU);
+          }
+          for (let q = 0; q < 4; q++) {
+            const side = q % 4, al = (r() - 0.5) * 0.8, s = 0.7 + 0.5 * r();
+            const su = side < 2 ? cu + al * m.w : cu + (side === 2 ? 1 : -1) * (m.w / 2 - 1.0), sz = side < 2 ? cz + (side ? 1 : -1) * (m.d / 2 - 1.0) : cz + al * m.d;
+            bag.add('shrub', i, su, sz, yt - 0.1, s, s, s, pick(SHRUB_TINT, r()), 0, 0, 0, 0, r() * TAU);
+          }
+        }
+      }
+      // ---- 事務所の塔: 数階ごとの日よけの横の庇（縦のルーバーの無い建物） ----
+      if (m.style === 0 && !fin && m.h > 24 && big && b.arche !== 'cityhall') {
+        const stepH = 3.75 * (m.h > 120 ? 6 : 4);
+        for (let yy = stepH; yy < m.h - 6; yy += stepH) ring4(bag, i, cu, cz, y0 + yy - 0.14, m.w, m.d, 0.55, 0.55, 0.22, FINC, 3, 35);
+      }
+      // ---- 角の付け柱（中層の建物と、石張りの事務所） ----
+      if ((b.arche === 'mid' || (b.arche === 'office' && fin)) && (m.style === 0 || m.style === 1) && m.h > 9 && !(m.style === 1 && m.glow > 0)) {
+        const pc = [m.col[0] * 0.80, m.col[1] * 0.80, m.col[2] * 0.80];
+        for (let q = 0; q < 4; q++) bag.add('box', i, cu + (q & 1 ? 1 : -1) * (m.w / 2 + 0.05), cz + (q & 2 ? 1 : -1) * (m.d / 2 + 0.05), y0, 1.1, m.h - 0.6, 1.1, pc, 3, 33);
+      }
+      // ---- 1階が店の建物: ひさし・袖看板・柱 ----
+      if (m.style === 4 && m.y === 0) {
+        const shopH = Math.min(5.2, m.h), tall = m.h >= 8.5;
+        for (let face = 0; face < 4; face++) {
+          const alongX = face < 2, sd = face % 2 ? 1 : -1, len = alongX ? m.w : m.d, half = len / 2, out = (alongX ? m.d : m.w) / 2;
+          const yaw = alongX ? (sd > 0 ? 0 : Math.PI) : (sd > 0 ? Math.PI / 2 : -Math.PI / 2);
+          const N = Math.floor((half - 0.6) / 6);
+          const at = function (x, o) { return alongX ? [cu + x, cz + sd * (out + o)] : [cu + sd * (out + o), cz + x]; };
+          for (let c = -N; c < N; c++) {
+            const xc = (c + 0.5) * 6, rv = r(), rv2 = r(), rv3 = r();
+            const door = big && alongX && sd < 0 && Math.abs(xc) < Math.min(12, b.w * 0.3) / 2 + 3;      // 正面の入口のまわりは空ける
+            if (!door && rv < 0.6) {
+              const q = at(xc, 0.72), col = pick(AWNING, rv2);
+              addTilted(bag, 'box', i, q[0], q[1], y0 + shopH * 0.735, 5.2, 0.07, 1.5, yaw, -0.30, col, 3, 60);
+              const q2 = at(xc, 1.44);
+              if (alongX) bag.add('box', i, q2[0], q2[1], y0 + shopH * 0.735 - 0.52, 5.2, 0.24, 0.05, [col[0] * 0.85, col[1] * 0.85, col[2] * 0.85], 3, 60);
+              else bag.add('box', i, q2[0], q2[1], y0 + shopH * 0.735 - 0.52, 0.05, 0.24, 5.2, [col[0] * 0.85, col[1] * 0.85, col[2] * 0.85], 3, 60);
+            }
+            if (!door && rv3 < 0.22 && m.h >= 6.6) {
+              // 袖看板（壁から突き出た縦長の看板。夜に光る）
+              const q = at(c * 6, 0.62), sc = [0.5 + 0.5 * Math.cos(6.28 * rv2), 0.5 + 0.5 * Math.cos(6.28 * rv2 + 2), 0.5 + 0.5 * Math.cos(6.28 * rv2 + 4)];
+              const sh = Math.min(3.0, m.h - shopH - 0.9);
+              if (sh > 1.2) {
+                if (alongX) bag.add('box', i, q[0], q[1], y0 + shopH + 0.3, 0.16, sh, 0.9, sc, 5, 0, 0.75);
+                else bag.add('box', i, q[0], q[1], y0 + shopH + 0.3, 0.9, sh, 0.16, sc, 5, 0, 0.75);
+              }
+            }
+            if (!door && rv > 0.82) {
+              // 店先の植木鉢
+              const q = at(xc + 2.2, 0.55), g0 = COL.groundH(COL.landTheta(i, q[0]), q[1]);
+              bag.add('box', i, q[0], q[1], g0 - 0.1, 0.62, 0.7, 0.62, [0.58, 0.44, 0.34], 3, 61);
+              bag.add('shrubLo', i, q[0], q[1], g0 + 0.45, 0.55, 0.6, 0.55, pick(SHRUB_TINT, rv2), 0, 0, 0, 0, rv3 * TAU);
+            }
+          }
+          // 高い低層部: 店の間の柱（列柱）
+          if (tall) for (let c = -N; c <= N; c++) {
+            const q = at(c * 6, 0.32);
+            bag.add('box', i, q[0], q[1], y0, 0.8, m.h - 0.6, 0.8, stoneC, 3, 62);
+          }
+        }
+      }
+      // ---- マンションのバルコニーの植木（ところどころ） ----
+      if (m.style === 1 && m.glow > 0 && m.h > 9) {
+        const nf = Math.floor(m.h / 3.1 + 0.01), ax = m.glow, len = ax === 1 ? m.w : m.d, depth = ax === 1 ? m.d : m.w, n = Math.min(24, Math.floor(nf * len / 40));
+        for (let q = 0; q < n; q++) {
+          const fl = 1 + Math.floor(r() * (nf - 1)), al = (r() - 0.5) * (len - 3), sd = r() < 0.5 ? -1 : 1, o = depth / 2 + 1.0;
+          const pu = ax === 1 ? cu + al : cu + sd * o, pz = ax === 1 ? cz + sd * o : cz + al, s = 0.32 + 0.2 * r();
+          bag.add('shrubLo', i, pu, pz, y0 + fl * 3.1 - 0.05, s, s * 1.1, s, pick(SHRUB_TINT, r()), 0, 0, 0, 0, r() * TAU);
+        }
+      }
+    }
+    // ---- 大きな建物の正面玄関: ひさしを支える柱、ガラスの風除室、両脇の光る柱 ----
+    if (big) {
+      const cw = Math.min(12, b.w * 0.3), front = b.z - b.d / 2, yb = b.base + 1.5;
+      for (let sd = -1; sd <= 1; sd += 2) {
+        const pu = b.u + sd * (cw / 2 - 0.4), g0 = COL.groundH(COL.landTheta(i, pu), front - 3.2);
+        bag.add('box', i, pu, front - 3.2, g0 - 0.1, 0.42, yb + 4.4 - g0 + 0.1, 0.42, [0.62, 0.63, 0.66], 3, 63);
+        bag.add('box', i, b.u + sd * (cw / 2 + 1.2), front - 0.5, g0 - 0.1, 0.5, 3.4, 0.5, DARK, 3, 63);
+        bag.add('box', i, b.u + sd * (cw / 2 + 1.2), front - 0.78, g0 + 0.5, 0.3, 2.6, 0.06, [1.0, 0.92, 0.75], 5, 0, 0.8);
+      }
+      bag.add('box', i, b.u, front - 0.9, b.base + 0.3, Math.min(5, cw * 0.6), 3.3, 1.7, GLASSR, 3, 64);
+      bag.add('box', i, b.u, front - 0.9, b.base + 3.6, Math.min(5, cw * 0.6) + 0.3, 0.16, 2.0, [0.30, 0.31, 0.33], 3, 64);
+    }
+  }
   function emitFacade(i, b, bag, r) {
     const fin = (b.arche === 'office' || b.arche === 'mid') && r() < 0.45;
+    emitOrnament(i, b, bag, fin);
     const pc = pick(PARAPET, r()), front = r() < 0.5 ? 1 : -1;
     b.M.forEach(function (m) {
       if (!m.solid || m.kind !== 'box') return;
@@ -1643,6 +1834,49 @@
       const su = b.u + (carSide ? -carSide : (k ? 1 : -1)) * (b.w / 2 + 1.6), szz = fzz - fz * (1.0 + 2.5 * k);
       addShrub(bag, r, i, su, szz, 0.8);
     }
+    // ---- 追加の作り込み: 出窓・煙突・ウッドデッキ・カーポート・門柱の明かり・郵便受け ----
+    const q2 = COL.rng(Math.floor(b.seed * 1e6) + 333), WOOD = [0.50, 0.37, 0.25], TRIM = [0.93, 0.93, 0.91];
+    // 出窓（玄関から離れた側の正面）
+    if (b.w > 7 && q2() < 0.6) {
+      const bu = b.u + (doorU > b.u ? -1 : 1) * Math.min(b.w / 2 - 1.6, Math.abs(doorU - b.u) + 2.6);
+      if (Math.abs(bu - doorU) > 2.1) {
+        bag.add('box', i, bu, zf + fz * 0.30, b.base + 1.25, 2.3, 1.75, 0.6, TRIM, 3, 50);
+        bag.add('box', i, bu, zf + fz * 0.34, b.base + 1.42, 1.95, 1.40, 0.6, [0.40, 0.55, 0.66], 3, 50);
+        bag.add('box', i, bu, zf + fz * 0.36, b.base + 1.42, 0.07, 1.40, 0.6, TRIM, 3, 50);
+        bag.add('box', i, bu, zf + fz * 0.38, b.base + 3.0, 2.6, 0.12, 0.85, [0.30, 0.31, 0.33], 3, 50);
+        bag.add('box', i, bu, zf + fz * 0.42, b.base + 0.95, 2.1, 0.28, 0.36, WOOD, 3, 50);
+        bag.add('shrub', i, bu, zf + fz * 0.44, b.base + 1.05, 0.34, 0.3, 0.2, [1.3, 0.8, 0.7], 0, 0, 0, 0, 0);
+      }
+    }
+    // 煙突（切妻屋根の家）
+    if (b.arche === 'houseA' && q2() < 0.4) {
+      const g = b.M[1];
+      bag.add('box', i, b.u + (q2() - 0.5) * b.w * 0.5, b.z - fz * b.d * 0.12, b.base + 5.6 + g.h * 0.35, 0.75, g.h * 0.65 + 0.9, 0.75, [0.56, 0.36, 0.30], 3, 51);
+    }
+    // 裏庭のウッドデッキと手すり、日よけの屋根
+    if (q2() < 0.5) {
+      const dw = Math.min(b.w * 0.6, 5.5), dz = b.z - fz * (b.d / 2 + 1.5), du = b.u + (q2() - 0.5) * (b.w - dw), g0 = gy(du, dz);
+      bag.add('box', i, du, dz, g0 - 0.1, dw, Math.max(0.3, b.base + 0.4 - g0 + 0.1), 2.8, WOOD, 3, 52);
+      bag.add('box', i, du, dz - fz * 1.36, b.base + 0.4, dw, 0.9, 0.06, [0.42, 0.31, 0.21], 3, 52);
+      if (q2() < 0.5) {
+        bag.add('box', i, du, dz, b.base + 2.9, dw + 0.3, 0.1, 3.0, TRIM, 3, 52);
+        for (let k = 0; k < 2; k++) bag.add('box', i, du + (k ? 1 : -1) * (dw / 2 - 0.1), dz - fz * 1.3, b.base + 0.4, 0.12, 2.5, 0.12, TRIM, 3, 52);
+      }
+    }
+    // カーポート（車のある家）
+    if (carSide && q2() < 0.65) {
+      const cu2 = b.u + carSide * (b.w / 2 + 2.2), g0 = gy(cu2, b.z);
+      bag.add('box', i, cu2, b.z, g0 + 2.35, 3.3, 0.1, 6.6, [0.80, 0.84, 0.86], 3, 53);
+      bag.add('box', i, cu2, b.z, g0 + 2.25, 3.4, 0.1, 0.12, [0.30, 0.31, 0.33], 3, 53);
+      for (let k = 0; k < 4; k++) bag.add('box', i, cu2 + carSide * 1.5, b.z + (k - 1.5) * 2.0, g0 - 0.1, 0.12, 2.5, 0.12, [0.30, 0.31, 0.33], 3, 53);
+    }
+    // 門柱と明かり、郵便受け
+    for (let k = -1; k <= 1; k += 2) {
+      const gu = doorU + k * 1.4, g0 = gy(gu, fzz);
+      bag.add('box', i, gu, fzz, g0 - 0.1, 0.38, 1.55, 0.38, hedge ? [0.70, 0.69, 0.66] : BLOCKW, 3, 54);
+      bag.add('box', i, gu, fzz, g0 + 1.45, 0.24, 0.24, 0.24, [1.0, 0.88, 0.62], 5, 0, 1.0);
+    }
+    bag.add('box', i, doorU + 1.4, fzz + fz * 0.24, gy(doorU + 1.4, fzz) + 0.75, 0.36, 0.26, 0.12, [0.70, 0.16, 0.14], 3, 55);
   }
 
   // 建物まわりの細かい物（屋上の設備、アンテナ、入口のひさし、広場の木）
