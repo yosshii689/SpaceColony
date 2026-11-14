@@ -410,6 +410,12 @@
   function toRoom(p) { moveTo(p, U0, Z0 - 2.6 - 1.6, Y0 + 0.05, [0, 0, -1]); }
   function toLobby(p) { moveTo(p, U0, front - 6, COL.groundH(COL.landTheta(0, U0), front - 6) + 0.1, [0, 0, -1]); }
   COL.goHotel = function (p) { if (ok) toRoom(p); };
+  // H キーの行き先「ホテル」: 今夜の宿泊代を払ってあれば部屋へ、まだなら1階の玄関（案内板）の前へ
+  COL.hotelTeleport = function (p) {
+    if (!ok) return;
+    if (COL.save.hotelPaid) toRoom(p);
+    else { toLobby(p); COL.toast('スカイスイートホテルの玄関です\n案内板の前で E: チェックイン（1泊 ' + COL.fmtCr(PRICE) + '）', 5); }
+  };
 
   function sleep(wake) {
     COL.fadeThen(function () {
@@ -434,7 +440,7 @@
       const lack = PRICE - sv.money;
       if (lack > 0) return { text: 'スカイスイートホテル: 1泊 ' + COL.fmtCr(PRICE) + '　（あと ' + COL.fmtCr(lack) + ' 足りません。宇宙港の採掘船で稼げます）', used: false };
       if (use) {
-        sv.money -= PRICE; sv.hotelPaid = true; COL.storeSave();
+        sv.money -= PRICE; sv.hotelPaid = true; sv.hotelVisited = true; COL.storeSave();
         COL.fadeThen(function () {
           toRoom(p);
           COL.toast('ようこそ スカイスイートへ\n地上 ' + Math.round(Y0 - tower.base) + ' m のワンフロアが今夜のお部屋です\nベッドで E: 朝まで眠る ／ Q: 夕方まで眠る', 9);

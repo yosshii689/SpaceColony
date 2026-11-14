@@ -36,6 +36,18 @@
     background: rgba(10, 20, 35, 0.6); color: #9fe8ff; font-size: 14px; white-space: nowrap; pointer-events: none;
   }
   #markRare { color: #e2b0ff; }
+  #tpMenu {
+    position: fixed; left: 50%; top: 40%; transform: translate(-50%, -50%); padding: 18px 26px; display: none; z-index: 4;
+    background: rgba(10, 20, 35, 0.85); color: #fff; border-radius: 12px; font-size: 18px; text-align: center; line-height: 1.6;
+  }
+  #tpMenu .opts { display: flex; gap: 14px; justify-content: center; margin: 12px 0 8px; }
+  #tpMenu button {
+    min-width: 150px; padding: 12px 18px; border: 1px solid rgba(255, 255, 255, 0.35); border-radius: 8px; cursor: pointer;
+    background: rgba(255, 255, 255, 0.08); color: #fff; font: inherit;
+  }
+  #tpMenu button:hover { background: rgba(255, 255, 255, 0.2); }
+  #tpMenu .key { display: inline-block; min-width: 1.4em; margin-right: 8px; border-radius: 4px; background: #e6c27a; color: #222; font-weight: bold; }
+  #tpMenu .note { font-size: 13px; color: #b9c6d4; }
   #fade { position: fixed; inset: 0; background: #000; opacity: 0; transition: opacity 1.1s; pointer-events: none; z-index: 5; }
   body.photo #hud, body.photo #help, body.photo #prompt, body.photo #shiphud, body.photo #toast, body.photo .mark { display: none; }
   body:not(.dev) .dev-only, body.dev .nrm-only { display: none; }
@@ -97,11 +109,15 @@
 <div id="prompt"></div>
 <pre id="shiphud"></pre>
 <div id="toast"></div>
+<div id="tpMenu">どこへ移動しますか？
+  <div class="opts"><button id="tpHome"><span class="key">1</span>ホーム</button><button id="tpHotel"><span class="key">2</span>ホテル</button></div>
+  <div class="note">1 / 2 キーで選ぶ　（H でやめる）</div>
+</div>
 <div id="markDock" class="mark"></div>
 <div id="markRare" class="mark"></div>
 <div id="fade"></div>
 <canvas id="map"></canvas>
-<div id="help"><span class="dev-only">［開発者モード］ WASD 移動 ／ W二回押し 高速 ／ Space ジャンプ・上昇 ／ Space二回押し 飛行⇔徒歩 ／ Shift 下降・潜る ／ T 時刻早送り ／ V 画質 ／ R 解像度 ／ C 車を呼ぶ ／ E 乗る・降りる・使う ／ Q 時間を飛ばす ／ H 自宅（売地）へ ／ M 地図 ／ P 文字を消す ／ K 画像を保存 ／ N 消音 ／ 1〜7 見どころへ移動 ／ 8 最寄り駅 9 次の駅 0 前の駅 ／ Esc 一時停止・上書き保存</span><span class="nrm-only">WASD 移動 ／ W二回押し 走る ／ Space ジャンプ ／ Shift 潜る ／ T 時刻早送り ／ V 画質 ／ R 解像度 ／ C 車を呼ぶ ／ E 乗る・降りる・使う ／ Q 時間を飛ばす（モノレール・ベッド） ／ H 自宅へ（豪邸を買った後） ／ M 地図 ／ P 文字を消す ／ K 画像を保存 ／ N 消音 ／ Esc 一時停止・上書き保存</span></div>
+<div id="help"><span class="dev-only">［開発者モード］ WASD 移動 ／ W二回押し 高速 ／ Space ジャンプ・上昇 ／ Space二回押し 飛行⇔徒歩 ／ Shift 下降・潜る ／ T 時刻早送り ／ V 画質 ／ R 解像度 ／ C 車を呼ぶ ／ E 乗る・降りる・使う ／ Q 時間を飛ばす ／ H ホーム・ホテルへ ／ M 地図 ／ P 文字を消す ／ K 画像を保存 ／ N 消音 ／ 1〜7 見どころへ移動 ／ 8 最寄り駅 9 次の駅 0 前の駅 ／ Esc 一時停止・上書き保存</span><span class="nrm-only">WASD 移動 ／ W二回押し 走る ／ Space ジャンプ ／ Shift 潜る ／ T 時刻早送り ／ V 画質 ／ R 解像度 ／ C 車を呼ぶ ／ E 乗る・降りる・使う ／ Q 時間を飛ばす（モノレール・ベッド） ／ H ホーム・ホテルへ（買った後・泊まった後） ／ M 地図 ／ P 文字を消す ／ K 画像を保存 ／ N 消音 ／ Esc 一時停止・上書き保存</span></div>
 <div id="title"><div class="box">
   <div id="tmain">
     <h1>スペースコロニー散策</h1>
@@ -167,8 +183,8 @@
     <tr><td>Q</td><td>時間を飛ばす: モノレールでは次の駅まで（M の地図で駅を選ぶとその駅まで）／ ベッドでは夜のはじまり 18:00 まで（E なら朝 7:00 まで）</td></tr>
     <tr class="nrm-only"><td>宇宙港へ</td><td>陸地の宇宙港側にあるエレベーター駅（地図の水色の四角）で E。上は無重力なので、漂って採掘船まで行けます</td></tr>
     <tr><td>採掘船</td><td>宇宙港のドック<span class="dev-only">（6 キー）</span>で E。マウスで向き、W S 前後、A D 左右、Space Shift 上下。隕石に機首を向けて左クリック長押しで採掘。戻って E で着艦すると鉱石が売れる</td></tr>
-    <tr class="dev-only"><td>H</td><td>自宅へ移動（買う前は売地の看板の前へ）。お金が貯まると豪邸を建てられる</td></tr>
-    <tr class="nrm-only"><td>H</td><td>豪邸を買った後は、自宅へ移動。売地は地図の黄色い家（陸地A・ガラスの端寄りの海辺）</td></tr>
+    <tr class="dev-only"><td>H</td><td>ホーム・ホテルへ移動（両方行けるときは 1 / 2 で選ぶ）。お金が貯まると豪邸を建てられる</td></tr>
+    <tr class="nrm-only"><td>H</td><td>豪邸を買った後はホーム、ホテルに一度泊まった後はホテルへ移動（両方行けるときは 1 / 2 で選ぶ）。売地は地図の黄色い家、ホテルは金色の塔</td></tr>
     <tr class="dev-only"><td>8 ／ 9 ／ 0</td><td>モノレールの駅のホームへ移動（8 一番近い駅 ／ 9 次の駅 ／ 0 前の駅）</td></tr>
     <tr><td>P ／ K</td><td>撮影: P で画面の文字を消す・戻す、K で今の画面を画像として保存</td></tr>
     <tr><td>N</td><td>音を消す・戻す</td></tr>

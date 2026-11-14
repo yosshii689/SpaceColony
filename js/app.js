@@ -187,6 +187,23 @@ function appMain() {
   // ---- 入力 ----
   const keys = {};
   let mouseX = 0, mouseY = 0, jumpQueued = false, usePressed = false, callPressed = false, skipPressed = false, uiHidden = false, shotQueued = false;
+  // ---- H キーの行き先: ホーム（豪邸を買ってから）・ホテル（一度泊まってから）。開発者モードではどちらも ----
+  let tpOpen = false;
+  const tpTargets = function () {
+    const t = [];
+    if (COL.devMode || COL.save.owned) t.push('home');
+    if (COL.devMode || COL.save.hotelVisited) t.push('hotel');
+    return t;
+  };
+  function openTp() { tpOpen = true; $('tpMenu').style.display = 'block'; }
+  function closeTp() { tpOpen = false; $('tpMenu').style.display = 'none'; }
+  function teleportTo(k) {
+    closeTp();
+    COL.ride = null; COL.driving = false; COL.onTrain = null;
+    if (k === 'home') COL.goHome(player); else COL.hotelTeleport(player);
+  }
+  $('tpHome').addEventListener('click', function (e) { e.stopPropagation(); teleportTo('home'); renderer.domElement.requestPointerLock(); });
+  $('tpHotel').addEventListener('click', function (e) { e.stopPropagation(); teleportTo('hotel'); renderer.domElement.requestPointerLock(); });
   // 二回押し: W を素早く2回 → 2回目を押している間ずっと高速。Space を素早く2回 → 飛行と徒歩の切り替え
   const DOUBLE_TAP = 0.3;
   let lastW = -9, lastSpace = -9, sprint = false;
@@ -196,6 +213,13 @@ function appMain() {
     if (e.code === 'Space' || e.code.indexOf('Arrow') === 0) e.preventDefault();
     if (e.repeat) return;
     keys[e.code] = true;
+    // 行き先を選ぶ画面を開いている間: 1 ホーム, 2 ホテル, H / Esc でやめる（ほかのキーの働きは止める）
+    if (tpOpen) {
+      if (e.code === 'Digit1' || e.code === 'Numpad1') teleportTo('home');
+      else if (e.code === 'Digit2' || e.code === 'Numpad2') teleportTo('hotel');
+      else if (e.code === 'KeyH' || e.code === 'Escape') closeTp();
+      return;
+    }
     const t = performance.now() / 1000;
     if (e.code === 'KeyW' || e.code === 'ArrowUp') {
       if (t - lastW < DOUBLE_TAP) sprint = true;
@@ -213,10 +237,12 @@ function appMain() {
     if (e.code === 'KeyC' && !COL.pilot) callPressed = true;
     if (e.code === 'KeyQ') skipPressed = true;                // 時間を飛ばす（モノレール・ベッド）
     if (COL.pilot && /^Digit\d$/.test(e.code)) return;       // 操縦中は場所の移動をしない
-    // H: 自宅へ。普通にプレイでは豪邸を買ってから
+    // H: ホーム（豪邸を買ってから）かホテル（一度泊まってから）へ移動。両方行けるときは選ぶ画面を出す
     if (e.code === 'KeyH' && !COL.pilot && !COL.isFading()) {
-      if (COL.devMode || COL.save.owned) { COL.ride = null; COL.driving = false; COL.onTrain = null; COL.goHome(player); }
-      else COL.toast('H キーで帰れるのは、豪邸を買ってからです\n売地は M の地図の黄色い家のところです', 4);
+      const t2 = tpTargets();
+      if (t2.length === 2) openTp();
+      else if (t2.length === 1) teleportTo(t2[0]);
+      else COL.toast('H キーで移動できるのは、豪邸を買うか、ホテルに一度泊まってからです\n売地は M の地図の黄色い家、ホテルは金色の塔のところです', 5);
     }
     COL.initSound();
     if (e.code === 'KeyN') COL.toggleMute();
