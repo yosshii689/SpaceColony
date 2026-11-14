@@ -77,13 +77,19 @@
   }
 
   const CARS = 110, CAR_PARTS = 4, PEOPLE = 40;
-  const LIMBS = 11, BALLS = 8, BOXES = 3;        // 1人ぶんの部品の数（筒・球・箱）
+  // 服・肌・髪の色（落ち着いた実際の服に近い色）
   const CARC = [[0.78, 0.12, 0.10], [0.90, 0.90, 0.90], [0.10, 0.10, 0.12], [0.18, 0.30, 0.66], [0.60, 0.60, 0.62], [0.88, 0.74, 0.12], [0.85, 0.85, 0.80], [0.20, 0.45, 0.35]];
-  const SHIRT = [[0.80, 0.25, 0.22], [0.22, 0.42, 0.75], [0.90, 0.88, 0.82], [0.25, 0.55, 0.38], [0.90, 0.72, 0.20], [0.50, 0.32, 0.60], [0.15, 0.16, 0.20], [0.85, 0.50, 0.60]];
-  const SKIN = [[0.93, 0.78, 0.66], [0.80, 0.62, 0.48], [0.58, 0.42, 0.32], [0.96, 0.84, 0.74]];
-  const PANTS = [[0.16, 0.18, 0.26], [0.22, 0.22, 0.24], [0.42, 0.38, 0.30], [0.28, 0.34, 0.46], [0.55, 0.52, 0.46], [0.12, 0.12, 0.14]];
-  const HAIR = [[0.08, 0.07, 0.06], [0.20, 0.13, 0.08], [0.36, 0.24, 0.14], [0.62, 0.50, 0.30], [0.55, 0.55, 0.56], [0.14, 0.10, 0.10]];
-  let carD = null, carFine = null, limbD = null, ballD = null, shoeD = null;
+  const SHIRT = [[0.92, 0.92, 0.90], [0.62, 0.74, 0.86], [0.16, 0.20, 0.32], [0.50, 0.51, 0.53], [0.10, 0.10, 0.11], [0.82, 0.76, 0.64], [0.36, 0.40, 0.26],
+                 [0.48, 0.13, 0.16], [0.80, 0.62, 0.22], [0.90, 0.68, 0.70], [0.34, 0.46, 0.64], [0.16, 0.32, 0.24], [0.86, 0.36, 0.24], [0.70, 0.78, 0.66]];
+  const SUIT = [[0.12, 0.13, 0.16], [0.20, 0.22, 0.27], [0.32, 0.33, 0.35], [0.14, 0.18, 0.30], [0.40, 0.34, 0.27]];
+  const PANTS = [[0.13, 0.16, 0.26], [0.09, 0.09, 0.10], [0.25, 0.26, 0.28], [0.62, 0.55, 0.42], [0.22, 0.31, 0.47], [0.42, 0.52, 0.66], [0.80, 0.76, 0.68], [0.34, 0.25, 0.18]];
+  const SKIRTC = [[0.12, 0.12, 0.14], [0.20, 0.24, 0.40], [0.62, 0.20, 0.22], [0.80, 0.74, 0.62], [0.42, 0.44, 0.30], [0.70, 0.56, 0.70]];
+  const SKIN = [[0.94, 0.78, 0.66], [0.88, 0.69, 0.56], [0.76, 0.56, 0.42], [0.58, 0.40, 0.28], [0.40, 0.26, 0.18]];
+  const HAIR = [[0.045, 0.040, 0.035], [0.045, 0.040, 0.035], [0.14, 0.09, 0.055], [0.26, 0.16, 0.09], [0.56, 0.42, 0.24], [0.52, 0.51, 0.50], [0.34, 0.13, 0.07]];
+  const SHOES = [[0.08, 0.075, 0.07], [0.90, 0.90, 0.88], [0.30, 0.18, 0.11], [0.22, 0.24, 0.30], [0.55, 0.50, 0.44]];
+  const IRIS = [[0.22, 0.13, 0.07], [0.16, 0.10, 0.06], [0.30, 0.20, 0.10], [0.28, 0.42, 0.58], [0.34, 0.38, 0.22]];
+  const BAGC = [[0.10, 0.10, 0.11], [0.22, 0.28, 0.40], [0.45, 0.30, 0.18], [0.60, 0.18, 0.16], [0.35, 0.40, 0.30]];
+  let carD = null, carFine = null, bodies = null;
   const cars = [], people = [];
 
   function buildAgents(scene) {
@@ -99,106 +105,54 @@
       setLook(carD, n * 4 + 2, [1.0, 0.96, 0.82], 5, 2.0);
       setLook(carD, n * 4 + 3, [1.0, 0.10, 0.08], 5, 1.2);
     }
-    // 住民: 関節のある体。手足は先細りの筒、頭と手は球、靴と鞄は箱
-    const limbGeo = new THREE.CylinderGeometry(0.40, 0.5, 1, 8, 1, false); limbGeo.translate(0, 0.5, 0);
-    const ballGeo = new THREE.SphereGeometry(0.5, 12, 8); ballGeo.translate(0, 0.5, 0);
-    limbD = dynMesh(scene, PEOPLE * LIMBS, true, limbGeo, Kit.MAT.cyl);
-    ballD = dynMesh(scene, PEOPLE * BALLS, true, ballGeo, Kit.MAT.cyl);
-    shoeD = dynMesh(scene, PEOPLE * BOXES, true);
-    const pr = COL.rng(4848), pick = function (list) { return list[Math.floor(pr() * list.length)]; };
+    // 住民: 断面をつないだ一体の体（human.js）。男女で形を分け、服・髪・袖や丈は人ごとに変える
+    const pr = COL.rng(4848), pick = function (list) { return list[Math.floor(pr() * list.length)]; }, F = COL.Human.FLAG;
+    const cnt = [0, 0], looks = [];
     for (let n = 0; n < PEOPLE; n++) {
       const child = pr() < 0.12, female = pr() < 0.5;
       const m = {
         on: false, ph: pr() * TAU, child: child, female: female,
-        s: child ? 0.62 + pr() * 0.12 : (female ? 0.90 : 0.97) + pr() * 0.10,       // 身長の倍率（1.0 で約 1.72m）
-        build: 0.88 + pr() * 0.30,                                                   // 体格（横幅）
-        speed: (child ? 1.0 : 1.25) + pr() * 0.35,
-        skirt: female && pr() < 0.4, longHair: female ? pr() < 0.7 : pr() < 0.08,
-        shorts: pr() < 0.25, sleeves: pr() < 0.55, bag: pr() < 0.3, idle: pr() < 0.16,
+        s: child ? 0.62 + pr() * 0.12 : (female ? 0.925 : 0.985) + pr() * 0.07,     // 身長の倍率（1.0 で約 1.76m）
+        build: (female ? 0.92 : 0.96) + pr() * 0.20,                                 // 体格（横幅）
+        speed: (child ? 1.0 : 1.25) + pr() * 0.35, idle: pr() < 0.16,
       };
+      m.g = female ? 1 : 0; m.slot = cnt[m.g]++;
       people.push(m);
-      const skin = pick(SKIN), shirt = pick(SHIRT), pants = pick(PANTS), hair = pick(HAIR), L = n * LIMBS, Bq = n * BALLS, S = n * BOXES;
-      const leg = m.skirt ? skin : pants, shin = (m.skirt || m.shorts) ? skin : pants;
-      setLook(limbD, L, leg, 3); setLook(limbD, L + 1, leg, 3);                     // 太もも 左右
-      setLook(limbD, L + 2, shin, 3); setLook(limbD, L + 3, shin, 3);               // すね
-      setLook(limbD, L + 4, shirt, 3); setLook(limbD, L + 5, shirt, 3);             // 上腕
-      setLook(limbD, L + 6, m.sleeves ? shirt : skin, 3); setLook(limbD, L + 7, m.sleeves ? shirt : skin, 3);   // 前腕
-      setLook(limbD, L + 8, shirt, 3);                                              // 胴
-      setLook(limbD, L + 9, m.skirt ? pick(SHIRT) : pants, 3);                      // 腰（またはスカート）
-      setLook(limbD, L + 10, skin, 3);                                              // 首
-      setLook(ballD, Bq, skin, 3); setLook(ballD, Bq + 1, hair, 3); setLook(ballD, Bq + 2, hair, 3);   // 頭、髪（頭頂と前髪）、髪（後ろ）
-      setLook(ballD, Bq + 3, skin, 3); setLook(ballD, Bq + 4, skin, 3);             // 手
-      setLook(ballD, Bq + 5, [0.07, 0.06, 0.06], 3); setLook(ballD, Bq + 6, [0.07, 0.06, 0.06], 3);   // 目
-      setLook(ballD, Bq + 7, [0.62, 0.26, 0.24], 3);                                // 口
-      const shoe = pr() < 0.5 ? [0.10, 0.10, 0.11] : pr() < 0.5 ? [0.85, 0.85, 0.83] : [0.35, 0.22, 0.14];
-      setLook(shoeD, S, shoe, 3); setLook(shoeD, S + 1, shoe, 3);
-      setLook(shoeD, S + 2, pick(PANTS), 3);                                        // 鞄
+      // 服: 上着（背広）・スカート・半ズボン・袖の長さ・裾を出すか・ベルト・リュック
+      const jacket = !child && pr() < (female ? 0.10 : 0.26);
+      const skirt = female && !jacket && pr() < 0.42;
+      const sleeve = jacket ? 1 : pr() < 0.38 ? 1 : (female && pr() < 0.35) ? 2 : pr() < 0.18 ? 3 : 0;
+      const shorts = !skirt && !jacket && pr() < 0.22, capri = female && !skirt && !shorts && pr() < 0.25;
+      const untucked = !jacket && pr() < 0.55, belt = !untucked && !skirt && pr() < 0.8;
+      const flags = sleeve + (shorts ? F.SHORTS : 0) + (skirt ? F.SKIRT : 0) + ((female ? pr() < 0.72 : pr() < 0.04) ? F.LONG_HAIR : 0) + (pr() < 0.28 ? F.BAG : 0)
+                  + (jacket ? F.JACKET : 0) + (!jacket && pr() < 0.25 ? F.VNECK : 0) + (untucked ? F.UNTUCKED : 0) + (belt ? F.BELT : 0) + (capri ? F.CAPRI : 0)
+                  + (jacket && !female && pr() < 0.7 ? F.TIE : 0);
+      const suit = pick(SUIT), old = !child && pr() < 0.15;
+      looks.push({
+        skin: pick(SKIN), hair: old ? [0.62, 0.61, 0.60] : pick(HAIR), top: jacket ? suit : pick(SHIRT),
+        bottom: jacket ? suit : skirt ? pick(SKIRTC) : pick(PANTS), shoe: jacket ? [0.06, 0.05, 0.05] : pick(SHOES),
+        flags: flags, hairVol: female ? 0.004 + pr() * 0.010 : 0.0 + pr() * 0.008, seed: pr(),
+        headScale: child ? 1.17 : 1.0, bag: pick(BAGC), tie: [0, 0, 0], iris: pick(IRIS),
+      });
     }
+    bodies = [COL.Human.create(scene, Math.max(1, cnt[0]), false), COL.Human.create(scene, Math.max(1, cnt[1]), true)];
+    people.forEach(function (m, n) { bodies[m.g].look(m.slot, looks[n]); });
   }
 
-  // 筒を点 A から点 B へ渡す。X: 太さの基準になる横向き, wx/wz: A 側の太さ
-  function seg(d, n, A, Bp, X, wx, wz) {
-    const Y = V.sub(Bp, A), Yn = V.norm(Y), Z = V.norm(V.cross(X, Yn)), Xo = V.cross(Yn, Z), m = d.m, k = n * 16;
-    m[k] = Xo[0] * wx; m[k + 1] = Xo[1] * wx; m[k + 2] = Xo[2] * wx; m[k + 3] = 0;
-    m[k + 4] = Y[0]; m[k + 5] = Y[1]; m[k + 6] = Y[2]; m[k + 7] = 0;
-    m[k + 8] = Z[0] * wz; m[k + 9] = Z[1] * wz; m[k + 10] = Z[2] * wz; m[k + 11] = 0;
-    m[k + 12] = A[0]; m[k + 13] = A[1]; m[k + 14] = A[2]; m[k + 15] = 1;
-  }
   // 1人ぶんの姿勢を作る。f: 足元の位置と向き, m: その人, ph: 歩みの位相
   function pose(n, f, m, ph) {
-    const s = m.s, b = m.build, X = f.X, Y = f.Y, Z = f.Z, P = f.P;
-    const W = function (x, y, z) { return [P[0] + X[0] * x + Y[0] * y + Z[0] * z, P[1] + X[1] * x + Y[1] * y + Z[1] * z, P[2] + X[2] * x + Y[2] * y + Z[2] * z]; };
-    const TH = 0.44 * s, SH = 0.44 * s, FOOT = 0.07 * s, amp = m.idle ? 0 : 0.46;
-    // 脚: 太ももを前後に振り、前へ出す側は膝を曲げる
+    const idle = m.idle, amp = idle ? 0 : 0.42, LG = COL.Human.LEG, body = bodies[m.g];
+    // 脚: 太ももを前後に振り、前へ出す側は膝を曲げる。腰の高さは、低い方の足がちょうど地面に着く高さ
     const legA = [amp * Math.sin(ph), amp * Math.sin(ph + Math.PI)];
-    const knee = [0.07 + (m.idle ? 0 : 0.78 * Math.max(0, Math.cos(ph))), 0.07 + (m.idle ? 0 : 0.78 * Math.max(0, Math.cos(ph + Math.PI)))];
-    // 腰の高さ: 低い方の足がちょうど地面に着く高さ
-    const reach = Math.max(TH * Math.cos(legA[0]) + SH * Math.cos(legA[0] - knee[0]), TH * Math.cos(legA[1]) + SH * Math.cos(legA[1] - knee[1]));
-    const hipY = reach + FOOT, sway = m.idle ? Math.sin(clock * 0.7 + m.ph) * 0.012 : Math.sin(ph) * 0.015 * s;
-    const L = n * LIMBS, Bq = n * BALLS, S = n * BOXES, hipW = 0.085 * s * b;
-    for (let e = 0; e < 2; e++) {
-      const sd = e ? 1 : -1, a = legA[e], k = knee[e];
-      const hip = W(sd * hipW + sway, hipY, 0);
-      const kn = W(sd * hipW + sway, hipY - TH * Math.cos(a), TH * Math.sin(a));
-      const an = W(sd * hipW + sway, hipY - TH * Math.cos(a) - SH * Math.cos(a - k), TH * Math.sin(a) + SH * Math.sin(a - k));
-      seg(limbD, L + e, hip, kn, X, 0.155 * s * b, 0.165 * s * b);
-      seg(limbD, L + 2 + e, kn, an, X, 0.115 * s * b, 0.125 * s * b);
-      // 靴: 足首の下、つま先は進む向き
-      const fy = hipY - TH * Math.cos(a) - SH * Math.cos(a - k) - FOOT;
-      put(shoeD, S + e, P, X, Y, Z, sd * hipW + sway, Math.max(0, fy), TH * Math.sin(a) + SH * Math.sin(a - k) + 0.055 * s, 0.095 * s, 0.075 * s, 0.25 * s);
-    }
-    // 胴: 肩から腰へ（肩の側が広い）。少し前に傾ける
-    const lean = m.idle ? 0 : 0.03 * s, shY = hipY + 0.50 * s, shW = (m.female ? 0.165 : 0.19) * s * b;
-    const waist = W(sway, hipY + 0.02 * s, 0), chest = W(sway * 0.5, shY, lean);
-    seg(limbD, L + 8, chest, waist, X, shW * 2.05, 0.21 * s * b);
-    if (m.skirt) seg(limbD, L + 9, W(sway, hipY - 0.40 * s, 0), W(sway, hipY + 0.10 * s, 0), X, 0.50 * s * b, 0.46 * s * b);
-    else seg(limbD, L + 9, W(sway, hipY - 0.10 * s, 0), W(sway, hipY + 0.10 * s, 0), X, 0.33 * s * b, 0.22 * s * b);
-    // 腕: 脚と逆に振る。肘は軽く曲げる
-    for (let e = 0; e < 2; e++) {
-      const sd = e ? 1 : -1, a = m.idle ? 0.04 : -0.75 * legA[e], bend = m.idle ? 0.12 : 0.28 + 0.30 * Math.max(0, Math.sin(ph + (e ? Math.PI : 0) + Math.PI));
-      const UA = 0.29 * s, FA = 0.26 * s, x = sd * (shW + 0.035 * s) + sway * 0.5;
-      const sh = W(x, shY - 0.03 * s, lean), el = W(x + sd * 0.02 * s, shY - 0.03 * s - UA * Math.cos(a), lean + UA * Math.sin(a));
-      const hd = W(x + sd * 0.01 * s, shY - 0.03 * s - UA * Math.cos(a) - FA * Math.cos(a + bend), lean + UA * Math.sin(a) + FA * Math.sin(a + bend));
-      seg(limbD, L + 4 + e, sh, el, X, 0.095 * s * b, 0.10 * s * b);
-      seg(limbD, L + 6 + e, el, hd, X, 0.075 * s * b, 0.08 * s * b);
-      const hl = W(x + sd * 0.01 * s, shY - 0.03 * s - UA * Math.cos(a) - (FA + 0.085 * s) * Math.cos(a + bend), lean + UA * Math.sin(a) + (FA + 0.085 * s) * Math.sin(a + bend));
-      put(ballD, Bq + 3 + e, hl, X, Y, Z, 0, 0, 0, 0.07 * s, 0.10 * s, 0.085 * s);
-    }
-    // 首・頭・髪（子どもは頭が大きめ）
-    const hs = (m.child ? 1.22 : 1) * s, nk = W(sway * 0.5, shY, lean), hb = W(sway * 0.5, shY + 0.07 * s, lean + 0.01);
-    seg(limbD, L + 10, nk, hb, X, 0.085 * s, 0.085 * s);
-    put(ballD, Bq, hb, X, Y, Z, 0, -0.01 * hs, 0, 0.19 * hs, 0.235 * hs, 0.215 * hs);
-    // 髪: 頭頂から額の生え際までを覆う（前髪）。長い髪の人は後ろにも垂らす
-    put(ballD, Bq + 1, hb, X, Y, Z, 0, 0.080 * hs, -0.012 * hs, 0.214 * hs, 0.175 * hs, 0.252 * hs);
-    if (m.longHair) put(ballD, Bq + 2, hb, X, Y, Z, 0, -0.13 * hs, -0.068 * hs, 0.215 * hs, 0.34 * hs, 0.165 * hs);
-    else hide(ballD, Bq + 2, 1);
-    // 目と口
-    put(ballD, Bq + 5, hb, X, Y, Z, -0.040 * hs, 0.098 * hs, 0.089 * hs, 0.030 * hs, 0.026 * hs, 0.022 * hs);
-    put(ballD, Bq + 6, hb, X, Y, Z, 0.040 * hs, 0.098 * hs, 0.089 * hs, 0.030 * hs, 0.026 * hs, 0.022 * hs);
-    put(ballD, Bq + 7, hb, X, Y, Z, 0, 0.040 * hs, 0.087 * hs, 0.052 * hs, 0.014 * hs, 0.020 * hs);
-    // 鞄: 背負うか、持たないか
-    if (m.bag) put(shoeD, S + 2, P, X, Y, Z, sway, hipY + 0.14 * s, -0.19 * s * b, 0.26 * s, 0.32 * s, 0.11 * s);
-    else hide(shoeD, S + 2, 1);
+    const knee = [0.06 + (idle ? 0 : 0.74 * Math.max(0, Math.cos(ph))), 0.06 + (idle ? 0 : 0.74 * Math.max(0, Math.cos(ph + Math.PI)))];
+    const reach = Math.max(LG.TH * Math.cos(legA[0]) + LG.SH * Math.cos(legA[0] - knee[0]), LG.TH * Math.cos(legA[1]) + LG.SH * Math.cos(legA[1] - knee[1]));
+    const bob = reach - (LG.TH + LG.SH);
+    // 腕: 脚と逆に振り、前へ出た腕は肘を曲げる。立ち止まっている人は少し体重を左右に移す
+    const arm = [idle ? 0.03 : -0.75 * legA[0], idle ? 0.03 : -0.75 * legA[1]];
+    const el = [0, 1].map(function (e) { return idle ? 0.10 + 0.02 * Math.sin(clock * 0.5 + m.ph + e) : 0.20 + 0.34 * Math.max(0, Math.sin(ph + e * Math.PI + Math.PI)); });
+    const sway = idle ? Math.sin(clock * 0.7 + m.ph) * 0.012 : Math.sin(ph) * 0.014;
+    body.pose(m.slot, legA[0], legA[1], knee[0], knee[1], arm[0], arm[1], el[0], el[1], bob, sway, idle ? 0.0 : 0.05, idle ? 0.0 : 0.07 * Math.sin(ph));
+    put(body, m.slot, f.P, f.X, f.Y, f.Z, 0, 0, 0, m.s * m.build, m.s, m.s);
   }
 
   function updateAgents(dt, lc, pz, night) {
@@ -249,7 +203,7 @@
         else if (m.check <= 0) { m.check = 0.7; if (!COL.isUrban(m.i, p[0], p[1])) m.sgn = -m.sgn; }   // 道の端で引き返す
       } else m.on = false;
       if (!m.on && n < active) respawn(m, lc, pz, 25, 190, true);
-      if (!m.on) { hide(limbD, n * LIMBS, LIMBS); hide(ballD, n * BALLS, BALLS); hide(shoeD, n * BOXES, BOXES); continue; }
+      if (!m.on) { hide(bodies[m.g], m.slot, 1); continue; }
       const f = agentFrame(m);
       if (m.idle) {                                   // 立ち止まっている人は車道の方を向く
         const side = V.mul(f.X, m.off > 0 ? (m.dir === 0 ? -1 : 1) * m.sgn : (m.dir === 0 ? 1 : -1) * m.sgn);
@@ -257,9 +211,7 @@
       }
       pose(n, f, m, m.ph);
     }
-    limbD.mesh.instanceMatrix.needsUpdate = true;
-    ballD.mesh.instanceMatrix.needsUpdate = true;
-    shoeD.mesh.instanceMatrix.needsUpdate = true;
+    bodies[0].flush(); bodies[1].flush();
   }
 
   // ================= 魚（南国の海のサンゴ礁のまわり） =================
@@ -706,9 +658,12 @@
     updateBirds(dt, lc, c.z, lite ? 1 : night);
     updateFish(dt, lite ? null : lc, c.z);
     if (COL.debugPeople && lc) {                       // 目の前に12人を横一列に並べて歩く姿勢を見る
-      for (let n = 0; n < 12; n++) {
-        const th = COL.landTheta(lc.index, lc.u - 6.6 + n * 1.2), z = c.z + 5.5, f = COL.frameAt(th);
-        pose(n, { P: COL.toWorld(th, z, COL.groundH(th, z)), X: V.mul(f.east, -1), Y: f.up, Z: [0, 0, -1] }, people[n], clock * 5 + n * 0.9);
+      // COL.debugPeopleOpt = { first, count, gap, dist, turn, ph } で、並べる人・間隔・距離・向き・歩みの位相を変えられる
+      const o = COL.debugPeopleOpt || {}, cnt = o.count || 12, gap = o.gap || 1.2;
+      for (let k = 0; k < cnt; k++) {
+        const n = (o.first || 0) + k, th = COL.landTheta(lc.index, lc.u - (cnt - 1) * gap / 2 + k * gap), z = c.z + (o.dist || 5.5), f = COL.frameAt(th);
+        const tr = o.turn || 0, Z = V.add(V.mul([0, 0, -1], Math.cos(tr)), V.mul(f.east, Math.sin(tr)));
+        pose(n, { P: COL.toWorld(th, z, COL.groundH(th, z)), X: V.cross(f.up, Z), Y: f.up, Z: Z }, people[n], o.ph !== undefined ? o.ph : clock * 5 + n * 0.9);
       }
     }
   };

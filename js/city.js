@@ -108,6 +108,131 @@
       c *= 1.0 - 0.45 * dep;
       return vec4(c, lamp);
     }
+    // 品物などの落ち着いた色（彩度をおさえ、明るさに幅を持たせる）
+    vec3 goodsC(float h) {
+      vec3 c = 0.5 + 0.42 * cos(6.2831853 * (h + vec3(0.0, 0.33, 0.67)));
+      return mix(vec3(dot(c, vec3(0.333))), c, 0.62) * (0.55 + 0.55 * fract(h * 7.3));
+    }
+    // 店の中（実際の部屋は作らず、窓の奥に描く）: 奥の壁の棚・吊るした服・カウンターとメニュー板、床のタイル、天井の照明、手前の陳列台
+    //  p: 窓の面の上での位置 [m], rs: 店の幅と天井の高さ, d: 店の中へ向かう視線。戻り値 rgb: 色, a: 天井の照明なら 1
+    vec4 shopRoom(vec2 p, vec2 rs, vec3 d, float r, float r2) {
+      float D = 5.0 + 3.0 * r2;
+      float typ = floor(fract(r * 7.13) * 3.0);               // 0 品物の棚, 1 服の店, 2 カフェ
+      vec3 dd = mix(vec3(1e-4), d, step(1e-4, abs(d)));
+      vec3 inv = 1.0 / dd, o = vec3(p, 0.0);
+      float tx = d.x > 1e-4 ? (rs.x - p.x) / d.x : (d.x < -1e-4 ? -p.x / d.x : 1e5);
+      float ty = d.y > 1e-4 ? (rs.y - p.y) / d.y : (d.y < -1e-4 ? -p.y / d.y : 1e5);
+      float tz = D / max(d.z, 1e-3);
+      float t = min(min(tx, ty), tz);
+      // 手前の陳列台（カフェはカウンター席の台）
+      vec3 bmin = vec3(rs.x * (0.24 + 0.12 * r2), 0.0, D * 0.30), bmax = vec3(rs.x * (0.60 + 0.12 * r2), typ > 1.5 ? 1.05 : 0.82, D * 0.46);
+      vec3 t0 = (bmin - o) * inv, t1 = (bmax - o) * inv, tn = min(t0, t1), tf = max(t0, t1);
+      float tin = max(max(tn.x, tn.y), tn.z), tout = min(min(tf.x, tf.y), tf.z);
+      vec3 wallC = mix(vec3(0.90, 0.89, 0.86), vec3(0.93, 0.91, 0.88) * (0.85 + 0.15 * goodsC(r2 * 3.1)), 0.35);
+      if (fract(r2 * 5.7) > 0.6) wallC = vec3(0.56, 0.42, 0.30);              // 板張りの壁の店
+      if (typ > 1.5 && fract(r2 * 3.3) > 0.5) wallC = vec3(0.30, 0.31, 0.32);  // 黒っぽい壁のカフェ
+      vec3 c;
+      float lamp = 0.0, dep;
+      if (tin < tout && tin > 0.0 && tin < t) {
+        vec3 h = o + d * tin;
+        dep = clamp(h.z / D, 0.0, 1.0);
+        vec3 wood = typ > 1.5 ? vec3(0.36, 0.24, 0.16) : vec3(0.86, 0.85, 0.82);
+        if (abs(h.y - bmax.y) < 0.01) {
+          // 台の上: 並べた品物
+          vec2 g = floor(h.xz * vec2(5.0, 4.0));
+          float hh = h21(g + r * 31.0);
+          c = mix(wood * 1.05, goodsC(hh), step(0.35, hh) * (typ > 1.5 ? 0.0 : 1.0));
+        } else c = wood * 0.72;
+        return vec4(c * (1.0 - 0.25 * dep), 0.0);
+      }
+      vec3 h = o + d * t;
+      dep = clamp(h.z / D, 0.0, 1.0);
+      if (t == tz || t == tx) {
+        // 奥の壁と横の壁（横の壁は奥行きを横の位置として描く）
+        vec2 q = t == tz ? h.xy : vec2(h.z + (h.x > rs.x * 0.5 ? 13.0 : 0.0), h.y);
+        float side = t == tz ? 1.0 : 0.82;
+        c = wallC;
+        if (typ < 0.5) {
+          // 品物の棚: 1m ごとの縦の支柱、40cm ごとの棚板、その間に高さのそろわない品物
+          float rowY = 0.40, row = floor((q.y - 0.12) / rowY), fy = fract((q.y - 0.12) / rowY);
+          float onShelf = step(0.0, row) * step(row, 4.0);
+          float cell = floor(q.x * 7.0), hh = h21(vec2(cell, row) + r * 17.0);
+          float item = step(fy, 0.18 + 0.70 * hh) * step(0.10, fract(q.x * 7.0)) * step(0.18, hh);
+          c = mix(c, vec3(0.20, 0.20, 0.21), onShelf * 0.8);
+          c = mix(c, goodsC(hh * 3.7 + row), onShelf * item);
+          c = mix(c, vec3(0.88, 0.88, 0.86), onShelf * step(fy, 0.07));
+          c = mix(c, vec3(0.30, 0.31, 0.33), onShelf * step(fract(q.x), 0.04));
+        } else if (typ < 1.5) {
+          // 服の店: 棒に吊るした服と、上の棚にたたんだ服
+          float cell = floor(q.x * 13.0), hh = h21(vec2(cell, 3.0) + r * 9.0);
+          float bot = 0.70 + 0.45 * hh, hang = step(bot, q.y) * step(q.y, 1.55) * step(0.25, hh) * step(0.08, fract(q.x * 13.0));
+          c = mix(c, goodsC(r2 + 0.12 * floor(hh * 4.0)) * (0.8 + 0.3 * hh), hang);
+          c = mix(c, vec3(0.55, 0.56, 0.58), step(abs(q.y - 1.58), 0.015));
+          float fold = step(abs(q.y - 2.05), 0.08) * step(0.3, h21(vec2(floor(q.x * 3.0), 7.0) + r)) * step(0.15, fract(q.x * 3.0));
+          c = mix(c, goodsC(h21(vec2(floor(q.x * 3.0), 9.0) + r)), fold);
+          c = mix(c, wallC * 0.7, step(abs(q.y - 1.96), 0.012));
+        } else {
+          // カフェ: カウンター、後ろの棚の器、上のメニュー板
+          float counter = step(q.y, 1.0) * side;
+          c = mix(c, vec3(0.30, 0.20, 0.13), counter);
+          c = mix(c, vec3(0.85, 0.83, 0.80), counter * step(0.96, q.y));
+          float shelf = step(abs(q.y - 1.40), 0.13) * step(0.5, fract(q.x * 6.0)) * step(0.35, h21(vec2(floor(q.x * 6.0), 2.0) + r));
+          c = mix(c, vec3(0.92, 0.91, 0.88), shelf * (1.0 - counter));
+          vec2 mb = vec2(fract(q.x / 1.6), q.y);
+          float board = step(1.75, q.y) * step(q.y, 2.55) * step(0.08, mb.x) * step(mb.x, 0.92) * side;
+          float txt = step(0.55, fract(q.y * 9.0)) * step(0.2, mb.x) * step(mb.x, 0.2 + 0.6 * h21(vec2(floor(q.y * 9.0), floor(q.x / 1.6)) + r));
+          c = mix(c, mix(vec3(0.10, 0.11, 0.10), vec3(0.85, 0.84, 0.78), txt), board);
+        }
+        c *= side;
+      } else if (d.y > 0.0) {
+        // 天井: 丸い照明が並ぶ
+        c = vec3(0.86);
+        vec2 lq = vec2(h.x, h.z) / 1.4;
+        lamp = 1.0 - step(0.16, length(fract(lq) - 0.5));
+      } else {
+        // 床: タイル（または板張り）
+        vec2 fq = vec2(h.x, h.z);
+        bool plank = fract(r * 3.9) > 0.55;
+        c = plank ? vec3(0.52, 0.38, 0.26) * (0.85 + 0.25 * h21(floor(fq * vec2(1.0, 6.0)) + r)) : vec3(0.80, 0.79, 0.76);
+        vec2 gq = abs(fract(plank ? fq * vec2(1.0, 6.0) : fq / 0.6) - 0.5);
+        c *= 1.0 - 0.18 * step(0.46, max(gq.x, gq.y));
+      }
+      c *= 1.0 - 0.28 * dep;
+      return vec4(c, lamp);
+    }
+    // 看板の字（それらしい形）: 縦横の線を組み合わせる。f: 字の枠の中の位置 (0..1), h: 字ごとの乱数
+    float glyph(vec2 f, float h) {
+      vec2 p = (f - vec2(0.14, 0.0)) / vec2(0.72, 1.0);
+      if (p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0) return 0.0;
+      float t = 0.18, m = 0.0;
+      float b0 = step(0.4, fract(h * 13.7)), b1 = step(0.45, fract(h * 29.3)), b2 = step(0.4, fract(h * 47.1)), b3 = step(0.3, fract(h * 61.9));
+      float b4 = step(0.5, fract(h * 83.3)), b5 = step(0.45, fract(h * 97.1)), b6 = step(0.5, fract(h * 7.9)), b7 = step(0.8, fract(h * 113.0));
+      m = max(m, b0 * step(1.0 - t, p.y));
+      m = max(m, b1 * step(abs(p.y - 0.5), t * 0.5));
+      m = max(m, b2 * step(p.y, t));
+      m = max(m, b3 * step(p.x, t) * step(0.5, p.y));
+      m = max(m, max(b3, b4) * step(p.x, t) * step(p.y, 0.5));
+      m = max(m, b5 * step(1.0 - t, p.x) * step(0.5, p.y));
+      m = max(m, b6 * step(1.0 - t, p.x) * step(p.y, 0.5));
+      m = max(m, b7 * step(abs(p.x - p.y), t * 0.7));
+      m = max(m, (1.0 - b3) * (1.0 - b5) * step(abs(p.x - 0.5), t * 0.5));
+      return m;
+    }
+    // 看板の地の色（落ち着いた色）と字の色
+    vec3 fasciaC(float h) {
+      return h < 0.18 ? vec3(0.13, 0.13, 0.14) : h < 0.32 ? vec3(0.10, 0.17, 0.30) : h < 0.44 ? vec3(0.12, 0.26, 0.19)
+           : h < 0.56 ? vec3(0.40, 0.10, 0.12) : h < 0.70 ? vec3(0.88, 0.86, 0.80) : h < 0.82 ? vec3(0.45, 0.31, 0.20) : vec3(0.93, 0.93, 0.92);
+    }
+    vec3 letterC(vec3 bg, float h) {
+      return dot(bg, vec3(0.333)) > 0.5 ? (fract(h * 5.1) < 0.5 ? vec3(0.10, 0.10, 0.11) : vec3(0.55, 0.12, 0.10))
+                                         : (fract(h * 5.1) < 0.6 ? vec3(0.96, 0.95, 0.90) : vec3(0.90, 0.74, 0.42));
+    }
+    // 字の並び。q: 看板の中心からの位置 [m]（x 横, y 縦 0..1 で字の高さ）, n: 字の数, w: 字の幅 [m]
+    float signText(vec2 q, float n, float w, float h) {
+      float k = floor(q.x / w + n * 0.5);
+      if (k < 0.0 || k >= n || q.y < 0.0 || q.y > 1.0) return 0.0;
+      return glyph(vec2(fract(q.x / w + n * 0.5), q.y), h21(vec2(k, h * 97.0)));
+    }
     // 向き n の面に当たる光。宇宙港ドックの中（z < 0）は昼夜に関係なく照明で明るい
     vec3 shade(vec3 n, vec3 up, vec3 ld, float sh) {
       vec3 l = ambCol * (0.76 + 0.24 * dot(n, up)) + sunCol * max(dot(n, ld), 0.0) * sh;
@@ -172,6 +297,21 @@
         } else {
           col = accent * 0.25 * light + accent * (0.30 + 0.70 * on) * (0.35 + 1.5 * night);
         }
+      } else if (st == 9) {
+        // 店の看板の板: 落ち着いた色の地に字（夜は字が光る）。ふちは金属の枠
+        vec2 q = vUV;
+        float H = vSize.y, hw = vSize.x, lh = H * 0.60, w = lh * 0.74, n = min(8.0, floor(hw * 1.7 / w));
+        float txt = (vRoof < 0.5 && vRoof > -0.5 && hw > 1.0) ? signText(vec2(q.x, (q.y - H * 0.20) / lh), n, w, seed) : 0.0;
+        float edge = step(min(hw - abs(q.x), min(q.y, H - q.y)), 0.07) * step(abs(vRoof), 0.5);
+        vec3 lc = letterC(vCol, seed);
+        col = mix(mix(vCol, lc, txt), vec3(0.24, 0.25, 0.26), edge) * light + lc * txt * (0.12 + 1.1 * night);
+      } else if (st == 10) {
+        // 日よけの布: 店によって縞。布のたるみの陰
+        float q = vRoof > 0.5 ? vTop.x : vUV.x;
+        float striped = step(0.45, fract(dot(vCol, vec3(3.1, 7.7, 1.3))));
+        float s = step(0.5, fract(q / 0.30));
+        vec3 base = mix(vCol, mix(vCol, vec3(0.93, 0.91, 0.85), s), striped);
+        col = base * (0.93 + 0.07 * cos(q / 0.30 * 3.14159265)) * (0.96 + 0.08 * vnoise(vec2(q, vUV.y) * 9.0)) * light;
       } else if (vRoof > 0.9) {
         // 屋上: 防水シートの継ぎ目とむら
         float rk = clamp(1.0 - fwidth(vTop.x) / 0.5, 0.0, 1.0);
@@ -199,13 +339,19 @@
         if (st == 4 && uv.y < min(5.2, H)) {
           // 1階の店: 大きなガラスと看板
           cs = vec2(6.0, min(5.2, H)); lo = vec2(0.05, 0.06); hi = vec2(0.95, 0.74);
-          margin = 0.6; trans = 0.9; kind = 2.0; dayLit = 1.0; nightLit = 0.85; mull = 0.0; span = 1.0; refl = 0.08;
+          margin = 0.6; trans = 0.9; kind = 2.0; dayLit = 1.0; nightLit = 0.85; mull = 0.0; span = 1.0; refl = 0.15;
+          // 店ごとの看板: 落ち着いた色の板に、字を並べる（夜は字が光る）
           vec2 sid = floor(uv / cs);
-          float fy = fract(uv.y / cs.y), fxx = fract(uv.x / cs.x);
+          float fy = fract(uv.y / cs.y), fxx = fract(uv.x / cs.x), sh2 = h21(sid + vec2(seed, 3.0));
           float band = step(0.79, fy) * step(fy, 0.96) * step(0.06, fxx) * step(fxx, 0.94);
-          vec3 sc2 = 0.5 + 0.5 * cos(6.2831853 * (h21(sid + vec2(seed, 3.0)) + vec3(0.0, 0.33, 0.67)));
-          wall = mix(wall, sc2 * 0.8, band * fineK);
-          sign = sc2 * band * fineK * 0.9;
+          vec3 bg = fasciaC(sh2);
+          float nL = 3.0 + floor(fract(sh2 * 7.7) * 6.0), lw = 0.40;
+          float txt = signText(vec2((fxx - 0.5) * cs.x, (fy - 0.835) / 0.09), nL, lw, sh2) * band;
+          vec3 lc = letterC(bg, sh2);
+          float trim = band * (1.0 - step(0.80, fy) * step(fy, 0.95));
+          vec3 fas = mix(mix(bg, lc, txt * fineK + 0.18 * txt * (1.0 - fineK)), bg * 0.6, trim);
+          wall = mix(wall, fas, band);
+          sign = lc * txt * fineK * 1.1 + bg * band * 0.10;
         } else if (st == 4) {
           uv.y -= 5.2; H -= 5.2;
           cs = vec2(3.0, 3.6); lo = vec2(0.10, 0.30); hi = vec2(0.90, 0.92); margin = 0.6; mull = 0.0; recess = 1.0; span = 1.0;
@@ -263,7 +409,7 @@
         if (roomK > 0.01 && m > 0.001) {
           vec3 dl = vec3(dot(-V, vT), dot(-V, vB), dot(-V, -N));
           vec2 rp = vec2((mod(id.x, span) + f.x) * cs.x, f.y * cs.y);
-          vec4 rm = room(rp, vec2(span * cs.x, cs.y), dl, r, r2, kind);
+          vec4 rm = kind > 1.5 ? shopRoom(rp, vec2(span * cs.x, cs.y), dl, r, r2) : room(rp, vec2(span * cs.x, cs.y), dl, r, r2, kind);
           inside = mix(vec3(0.55), rm.rgb, roomK) * inLight + rm.a * lit * lampC * 1.3 * roomK;
         }
         if (kind < 0.5 && st != 7) {
@@ -302,6 +448,22 @@
         float frame = 1.0 - step(0.05, min(min(wm.x, win.x - wm.x), min(wm.y, win.y - wm.y)));
         if (mull > 0.0) frame = max(frame, step((0.5 - abs(fract(uv.x / mull) - 0.5)) * mull, 0.045));
         vec3 frameC = mix(vec3(0.26, 0.27, 0.29), vec3(0.80, 0.81, 0.82), step(0.5, fract(seed * 0.37))) * light;
+        if (kind > 1.5) {
+          // 店先のガラス: 欄間の横桟・縦の方立て・扉（太い枠と金属の取っ手）
+          float ds = floor(h21(id + vec2(seed, 41.0)) * 3.0), third = win.x / 3.0, dx0 = ds * third;
+          float doorH = min(2.55, win.y - 0.3);
+          float tr = step(abs(wm.y - doorH), 0.045);
+          float v1 = step(abs(wm.x - third), 0.035), v2 = step(abs(wm.x - 2.0 * third), 0.035);
+          float inDoor = step(dx0, wm.x) * step(wm.x, dx0 + third) * step(wm.y, doorH);
+          float dEdge = min(min(wm.x - dx0, dx0 + third - wm.x), doorH - wm.y);
+          frame = max(frame, max(tr, max(v1, v2)) * fineK);
+          frame = max(frame, inDoor * step(dEdge, 0.09) * fineK);
+          frameC = mix(vec3(0.13, 0.13, 0.14), vec3(0.42, 0.36, 0.28), step(0.7, fract(seed * 0.53))) * light;
+          float hx = ds < 1.5 ? dx0 + third - 0.22 : dx0 + 0.22;
+          float handle = inDoor * step(abs(wm.x - hx), 0.022) * step(abs(wm.y - 1.10), 0.40) * fineK;
+          glass = mix(glass, vec3(0.75, 0.76, 0.78) * light + sunCol * sh * 0.3, handle);
+          glass *= 1.0 - 0.10 * inDoor * fineK;
+        }
         glass = mix(glass, frameC, frame * thinK);
         col = mix(wall * wallLight + sign * night, glass, m);
         if (st == 2) {
@@ -1216,6 +1378,8 @@
   const STONE = [[0.76, 0.74, 0.70], [0.68, 0.68, 0.68], [0.80, 0.77, 0.70]];
   const GLOW = [[0.25, 0.90, 1.0], [1.0, 0.35, 0.80], [1.0, 0.72, 0.28]];
   const GREY = [0.50, 0.51, 0.53], DARK = [0.20, 0.21, 0.23], WHITE = [0.93, 0.93, 0.91], RED = [0.90, 0.16, 0.12];
+  // 店の看板の地の色（落ち着いた色。シェーダーの fasciaC と同じ系統）
+  const FASCIA = [[0.13, 0.13, 0.14], [0.10, 0.17, 0.30], [0.12, 0.26, 0.19], [0.40, 0.10, 0.12], [0.88, 0.86, 0.80], [0.45, 0.31, 0.20], [0.93, 0.93, 0.92]];
   const HOUSE = [[0.90, 0.87, 0.80], [0.84, 0.78, 0.66], [0.78, 0.82, 0.84], [0.88, 0.80, 0.72], [0.74, 0.70, 0.62], [0.93, 0.92, 0.88]];
   const ROOF = [[0.46, 0.22, 0.18], [0.28, 0.30, 0.34], [0.36, 0.27, 0.21], [0.24, 0.33, 0.31], [0.52, 0.30, 0.20]];
   const SHED = [[0.72, 0.72, 0.70], [0.55, 0.62, 0.70], [0.70, 0.62, 0.52], [0.60, 0.66, 0.60]];
@@ -1282,8 +1446,7 @@
       add('box', 4, 4, H, 3, 3, GREY, false, w * 0.3, 0);
     } else if (b.arche === 'shop') {            // 小型店舗
       add('box', w, d, 0, 5.6, 4, stone);
-      const sc = [0.5 + 0.5 * Math.cos(6.28 * r()), 0.5 + 0.5 * Math.cos(6.28 * r() + 2), 0.5 + 0.5 * Math.cos(6.28 * r() + 4)];
-      add('box', w * 0.6, 0.4, 5.6, 1.5, 5, sc, false, 0, -d / 2 + 0.3, 0.7);
+      add('box', w * 0.6, 0.4, 5.6, 1.5, 9, pick(FASCIA, r()), false, 0, -d / 2 + 0.3, 0);       // 屋上の看板（字は描き方 9 で）
     } else if (b.arche === 'mall') {            // ショッピングモール
       add('box', w, d, 0, 15, 4, stone);
       add('box', w * 0.7, d * 0.6, 15, 6, 3, [0.80, 0.80, 0.78]);
@@ -1680,10 +1843,10 @@
             const door = big && alongX && sd < 0 && Math.abs(xc) < Math.min(12, b.w * 0.3) / 2 + 3;      // 正面の入口のまわりは空ける
             if (!door && rv < 0.6) {
               const q = at(xc, 0.72), col = pick(AWNING, rv2);
-              addTilted(bag, 'box', i, q[0], q[1], y0 + shopH * 0.735, 5.2, 0.07, 1.5, yaw, -0.30, col, 3, 60);
+              addTilted(bag, 'box', i, q[0], q[1], y0 + shopH * 0.735, 5.2, 0.07, 1.5, yaw, -0.30, col, 10, 60);
               const q2 = at(xc, 1.44);
-              if (alongX) bag.add('box', i, q2[0], q2[1], y0 + shopH * 0.735 - 0.52, 5.2, 0.24, 0.05, [col[0] * 0.85, col[1] * 0.85, col[2] * 0.85], 3, 60);
-              else bag.add('box', i, q2[0], q2[1], y0 + shopH * 0.735 - 0.52, 0.05, 0.24, 5.2, [col[0] * 0.85, col[1] * 0.85, col[2] * 0.85], 3, 60);
+              if (alongX) bag.add('box', i, q2[0], q2[1], y0 + shopH * 0.735 - 0.52, 5.2, 0.24, 0.05, col, 10, 60);
+              else bag.add('box', i, q2[0], q2[1], y0 + shopH * 0.735 - 0.52, 0.05, 0.24, 5.2, col, 10, 60);
             }
             if (!door && rv3 < 0.22 && m.h >= 6.6) {
               // 袖看板（壁から突き出た縦長の看板。夜に光る）
@@ -2382,7 +2545,7 @@
     sceneRef.traverseVisible(function (o) {
       if (!o.isMesh || !o.layers.test(shadowCam.layers)) return;
       _swap.push(o, o.material);
-      o.material = o.material.userData.leafy ? leafDepth : depthMat;
+      o.material = o.material.userData.depth || (o.material.userData.leafy ? leafDepth : depthMat);
     });
     rendererRef.setRenderTarget(shadowRT);
     rendererRef.setClearColor(0xffffff, 1);
