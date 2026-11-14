@@ -83,14 +83,17 @@
   const SKIN = [[0.93, 0.78, 0.66], [0.80, 0.62, 0.48], [0.58, 0.42, 0.32], [0.96, 0.84, 0.74]];
   const PANTS = [[0.16, 0.18, 0.26], [0.22, 0.22, 0.24], [0.42, 0.38, 0.30], [0.28, 0.34, 0.46], [0.55, 0.52, 0.46], [0.12, 0.12, 0.14]];
   const HAIR = [[0.08, 0.07, 0.06], [0.20, 0.13, 0.08], [0.36, 0.24, 0.14], [0.62, 0.50, 0.30], [0.55, 0.55, 0.56], [0.14, 0.10, 0.10]];
-  let carD = null, limbD = null, ballD = null, shoeD = null;
+  let carD = null, carFine = null, limbD = null, ballD = null, shoeD = null;
   const cars = [], people = [];
 
   function buildAgents(scene) {
     carD = dynMesh(scene, CARS * CAR_PARTS, true);
+    // 近くの車は細かい形（丸みのある車体・窓・タイヤ・灯り）で描く。2種類の形を、車ごとにどちらか使う
+    carFine = [dynMesh(scene, CARS, true, Kit.UNIT.carA, Kit.MAT.carA), dynMesh(scene, CARS, true, Kit.UNIT.carB, Kit.MAT.carB)];
     for (let n = 0; n < CARS; n++) {
-      const c = { on: false, speed: 11 + (n % 5) * 1.2, long: n % 9 === 0 };
+      const c = { on: false, speed: 11 + (n % 5) * 1.2, long: n % 9 === 0, fine: n % 3 === 1 ? 1 : 0 };
       cars.push(c);
+      setLook(carFine[0], n, CARC[n % CARC.length], 8, 1); setLook(carFine[1], n, CARC[n % CARC.length], 8, 1);
       setLook(carD, n * 4, c.long ? [0.92, 0.92, 0.90] : CARC[n % CARC.length], 3);
       setLook(carD, n * 4 + 1, [0.10, 0.12, 0.15], 3);
       setLook(carD, n * 4 + 2, [1.0, 0.96, 0.82], 5, 2.0);
@@ -216,14 +219,21 @@
         }
       } else c.on = false;
       if (!c.on && n < carMax) respawn(c, lc, pz, 110, 520, false);
+      hide(carFine[0], n, 1); hide(carFine[1], n, 1);
       if (!c.on) { hide(carD, n * 4, 4); continue; }
       const f = agentFrame(c), len = c.long ? 7.5 : 4.3, hgt = c.long ? 2.3 : 0.62;
+      if (!c.long && COL.carDist && lc && Math.hypot(f.u - lc.u, f.z - pz) < COL.carDist) {
+        hide(carD, n * 4, 4);
+        put(carFine[c.fine], n, f.P, f.X, f.Y, f.Z, 0, 0, 0, 1, 1, 1);
+        continue;
+      }
       put(carD, n * 4, f.P, f.X, f.Y, f.Z, 0, 0.28, 0, c.long ? 2.3 : 1.8, hgt, len);
       put(carD, n * 4 + 1, f.P, f.X, f.Y, f.Z, 0, 0.28 + hgt, c.long ? len / 2 - 1.1 : -0.3, c.long ? 2.2 : 1.6, c.long ? 0.05 : 0.52, c.long ? 1.6 : 2.2);
       put(carD, n * 4 + 2, f.P, f.X, f.Y, f.Z, 0, 0.55, len / 2, 1.5, 0.14, 0.06);
       put(carD, n * 4 + 3, f.P, f.X, f.Y, f.Z, 0, 0.58, -len / 2, 1.5, 0.12, 0.06);
     }
     carD.mesh.instanceMatrix.needsUpdate = true;
+    carFine[0].mesh.instanceMatrix.needsUpdate = true; carFine[1].mesh.instanceMatrix.needsUpdate = true;
     // ---- 住民（夜は少ない） ----
     const active = Math.round(PEOPLE * (1 - 0.6 * night) * sc);
     for (let n = 0; n < PEOPLE; n++) {

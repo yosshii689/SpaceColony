@@ -25,10 +25,15 @@
     shadowMap: { value: null },                      // 近くの建物と木の影（city.js が描く）
     shadowMat: { value: new THREE.Matrix4() },
     shadowOn: { value: 0 },
+    shadowRes: { value: 2048 },                      // 影の画像の一辺の画素数
+    ultra: { value: 0 },                             // 1=最高画質（細かな凹凸・映り込み・濡れた砂など）
+    camSurf: { value: new THREE.Vector2() },         // カメラの真下の地表の位置（周方向の距離, 軸方向）。細かい模様を崩さず描くための基準
+    camMod: { value: new THREE.Vector2() },          // 上の値を 64m で割った余り
+    noiseTex: { value: null },                       // 繰り返しのノイズ模様（4色それぞれ別の模様。雲と、最高画質の細かい質感に使う）
   };
 
   const GLSL_COMMON = `
-    uniform float spin, sunElev, mirrorTan, sunVis, cloudT, time, night;
+    uniform float spin, sunElev, mirrorTan, sunVis, cloudT, time, night, ultra;
     uniform vec3 sunCol, ambCol;
     const float COL_R = ${R.toFixed(1)};
     const float COL_L = ${L.toFixed(1)};
@@ -111,19 +116,21 @@
     #include <packing>
     uniform sampler2D shadowMap;
     uniform mat4 shadowMat;
-    uniform float shadowOn;
+    uniform float shadowOn, shadowRes;
     float shadowTap(vec2 uv, float z) { return step(z, unpackRGBAToDepth(texture2D(shadowMap, uv))); }
+    // 隣り合う4画素の結果をなめらかに混ぜて、輪郭のギザギザを消す
+    float shadowSoft(vec2 xy, float z) {
+      vec2 st = xy * shadowRes - 0.5, i = floor(st), f = st - i;
+      return mix(mix(shadowTap((i + vec2(0.5, 0.5)) / shadowRes, z), shadowTap((i + vec2(1.5, 0.5)) / shadowRes, z), f.x),
+                 mix(shadowTap((i + vec2(0.5, 1.5)) / shadowRes, z), shadowTap((i + vec2(1.5, 1.5)) / shadowRes, z), f.x), f.y);
+    }
     // off: 面から浮かせて調べる距離 [m]（影を落とす側の面は、自分の影を拾わないよう大きめにする）
     float shadowAt(vec3 wp, vec3 n, float off) {
       if (shadowOn < 0.5) return 1.0;
       vec4 sc = shadowMat * vec4(wp + n * off, 1.0);
       vec3 c = sc.xyz;
       if (c.x < 0.004 || c.y < 0.004 || c.x > 0.996 || c.y > 0.996 || c.z > 0.999 || c.z < 0.0) return 1.0;
-      // 隣り合う4画素の結果をなめらかに混ぜて、輪郭のギザギザを消す
-      float z = c.z - 0.00025;
-      vec2 st = c.xy * 2048.0 - 0.5, i = floor(st), f = st - i;
-      float s = mix(mix(shadowTap((i + vec2(0.5, 0.5)) / 2048.0, z), shadowTap((i + vec2(1.5, 0.5)) / 2048.0, z), f.x),
-                    mix(shadowTap((i + vec2(0.5, 1.5)) / 2048.0, z), shadowTap((i + vec2(1.5, 1.5)) / 2048.0, z), f.x), f.y);
+      float z = c.z - 0.00025, s = shadowSoft(c.xy, z);
       vec2 e = min(c.xy, 1.0 - c.xy);
       return mix(1.0, s, smoothstep(0.004, 0.08, min(e.x, e.y)));
     }`;
@@ -173,6 +180,41 @@
       vec2 i = floor(p), f = fract(p);
       f = f * f * (3.0 - 2.0 * f);
       return mix(mix(hash(i), hash(i + vec2(1, 0)), f.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x), f.y);
+    }`;
+  // 最高画質用の部品（GLSL_COMMON と GLSL_NOISE2 の後に入れる）
+  const GLSL_ULTRA = `
+    uniform sampler2D noiseTex;
+    // 面の上の位置 p [m] のノイズ（4種類）。cell: 模様1マスの大きさ [m]。計算ではなく画像から読むので軽い
+    vec4 tnoise(vec2 p, float cell) { return texture2D(noiseTex, p / (cell * 16.0)); }
+    // per マスで繰り返すノイズ（64m で折り返す座標で使っても継ぎ目が出ない）
+    float pnoise(vec2 p, float per) {
+      vec2 i = floor(p), f = fract(p);
+      f = f * f * (3.0 - 2.0 * f);
+      vec2 a = mod(i, per), b = mod(i + 1.0, per);
+      return mix(mix(hash(a), hash(vec2(b.x, a.y)), f.x), mix(hash(vec2(a.x, b.y)), hash(b), f.x), f.y);
+    }
+    // 面の上の位置 uv [m] での高さ h の傾き（細かな凹凸で法線を曲げるのに使う）
+    vec2 hgrad(vec2 uv, float h) {
+      vec2 dx = dFdx(uv), dy = dFdy(uv);
+      float hx = dFdx(h), hy = dFdy(h), det = dx.x * dy.y - dx.y * dy.x;
+      if (abs(det) < 1e-12) return vec2(0.0);
+      return clamp(vec2(hx * dy.y - hy * dx.y, hy * dx.x - hx * dy.x) / det, -1.5, 1.5);
+    }
+    // 向き d に見える空（映り込み用）: 霞んだ空・雲・太陽のまぶしさ。地平より下は暗い地面
+    vec3 envSky(vec3 wp, vec3 d) {
+      vec3 up = normalize(vec3(-wp.xy, 1e-3)), east = vec3(up.y, -up.x, 0.0);
+      float e = dot(d, up);
+      vec3 hz = ambCol * 1.3 + sunCol * 0.3;
+      #ifdef USE_FOG
+        hz = fogColor;
+      #endif
+      vec3 c = mix(hz * 1.06, hz * vec3(0.66, 0.78, 0.98), smoothstep(0.0, 0.85, e));
+      vec2 q = vec2(dot(d, east), d.z) / (abs(e) + 0.4);
+      float cl = smoothstep(0.50, 0.78, vnoise(q * 1.9 + cloudT * 8.0) * 0.6 + vnoise(q * 4.7) * 0.4) * smoothstep(0.04, 0.35, e);
+      c = mix(c, ambCol * 1.15 + sunCol * 0.85, cl * 0.6);
+      float s = max(dot(d, sunDirAt(wp)), 0.0);
+      c += sunCol * (pow(s, 700.0) * 7.0 + pow(s, 28.0) * 0.30);
+      return mix(c, hz * 0.42 + ambCol * 0.10, smoothstep(0.02, -0.22, e));
     }`;
   const surfVS = VS_HEAD + `
     attribute vec2 surf;            // x: 周方向の距離[m], y: 軸方向の位置[m]
@@ -246,29 +288,34 @@
     attribute vec3 gcol;
     attribute float urban;
     attribute float seaD;           // 南国の海の水深（それ以外は 0）
-    varying vec2 vSurf;
-    varying vec3 vColor, vAmb, vSun, vWorld;
+    attribute vec2 gmat;            // x: 砂なら 1, y: 水面からの高さ [m]
+    uniform vec2 camSurf;
+    varying vec2 vSurf, vLoc, vMat;
+    varying vec3 vColor, vAmb, vSun, vWorld, vN;
     varying float vUrban, vSea;
     void main() {
       vSea = seaD;
+      vMat = gmat;
       vec4 wp = modelMatrix * vec4(position, 1.0);
       vWorld = wp.xyz;
       vSurf = vec2(surf.x, wp.z);
+      vLoc = vSurf - camSurf;         // カメラの近くで小さな値になる座標（細かい模様の計算が粗くならない）
       vColor = gcol;
       vUrban = urban;
       vec3 n = normalize(normal), up = normalize(vec3(-wp.xy, 1e-4));
+      vN = n;
       vAmb = ambCol * (0.76 + 0.24 * dot(n, up));
       vSun = sunCol * max(dot(n, sunDirAt(wp.xyz)), 0.0);
       vec4 mvPosition = viewMatrix * wp;
       gl_Position = projectionMatrix * mvPosition;` + VS_TAIL + `
     }`;
-  const terrainFS = FS_HEAD + GLSL_NOISE2 + GLSL_SHADOW + GLSL_CAUSTIC + `
-    uniform float night, time;
-    varying vec2 vSurf;
-    varying vec3 vColor, vAmb, vSun, vWorld;
+  const terrainFS = FS_HEAD + GLSL_COMMON + GLSL_NOISE2 + GLSL_ULTRA + GLSL_SHADOW + GLSL_CAUSTIC + `
+    uniform vec2 camMod;
+    varying vec2 vSurf, vLoc, vMat;
+    varying vec3 vColor, vAmb, vSun, vWorld, vN;
     varying float vUrban, vSea;
     // 街の道路: 125m ごとの格子。偶数番は大通り（幅18m）、奇数番は通り（幅10m）
-    vec3 roads(vec3 col, vec2 p, float amt, out float lamp) {
+    vec3 roads(vec3 col, vec2 p, float amt, out float lamp, out float paved) {
       vec2 g = p / 125.0, idx = floor(g + 0.5);
       vec2 f = abs(g - idx) * 125.0;                    // 一番近い線までの距離（x: z方向に走る道, y: u方向に走る道）
       vec2 ave = 1.0 - mod(idx, 2.0);
@@ -295,6 +342,7 @@
       asph = mix(asph, vec3(0.86, 0.86, 0.82), clamp(cl + zx + ln, 0.0, 1.0) * fine * 0.9);
       col = mix(col, pave, walk * amt);
       col = mix(col, asph, road * amt);
+      paved = max(walk, road) * amt;
       // 街灯の明かり（42m おき）
       vec2 sp = (fract(p.yx / 42.0) - 0.5) * 42.0;
       lamp = amt * max(exp(-(sp.x * sp.x + f.x * f.x) / 160.0) * step(f.x, hw.x + 8.0),
@@ -307,11 +355,58 @@
       float k = clamp(1.0 - (fwidth(vSurf.x) + fwidth(vSurf.y)) / 6.0, 0.0, 1.0);
       float n = vnoise(vSurf / 5.0) * 0.6 + vnoise(vSurf / 23.0) * 0.4;
       vec3 col = vColor * (1.0 + (n - 0.5) * 0.22 * k);
-      float lamp = 0.0;
-      if (vUrban > 0.01) col = roads(col, vSurf, smoothstep(0.35, 0.65, vUrban), lamp);
+      float lamp = 0.0, paved = 0.0;
+      if (vUrban > 0.01) col = roads(col, vSurf, smoothstep(0.35, 0.65, vUrban), lamp, paved);
       vec3 up = normalize(vec3(-vWorld.xy, 0.0));
       float sh = shadowAt(vWorld, up, 0.12);
-      vec3 light = vAmb + vSun * sh + vec3(1.0, 0.82, 0.55) * lamp * night * 0.55;
+      vec3 amb = vAmb, sun = vSun, extra = vec3(0.0);
+      if (ultra > 0.5) {
+        // ---- 最高画質: 砂の風紋・粒・きらめき、波打ち際の濡れた砂、芝のむら、舗装のざらつき ----
+        vec2 pp = vLoc + camMod, pl = mod(pp, 64.0);
+        float fp = fwidth(vLoc.x) + fwidth(vLoc.y);
+        float nearK = clamp(1.0 - fp / 0.45, 0.0, 1.0), fineK = clamp(1.0 - fp / 0.07, 0.0, 1.0);
+        float sandK = vMat.x * (1.0 - paved);
+        float grassK = (1.0 - vMat.x) * (1.0 - paved) * smoothstep(0.03, 0.14, col.g - max(col.r, col.b));
+        vec3 N = normalize(vN), ld = sunDirAt(vWorld), V = normalize(cameraPosition - vWorld);
+        if (nearK > 0.0) {
+          vec4 n0 = tnoise(pp, 2.0), n1 = tnoise(pp + 3.7, 0.5), n2 = tnoise(pp + 1.3, 0.11), n3 = tnoise(pp, 0.03);
+          float rip = sin((pl.y + n0.r * 2.4 + pl.x * 0.3) * 9.8175) * 0.5 + 0.5;
+          float hS = rip * 0.034 * smoothstep(0.30, 0.55, n0.g) + n1.r * 0.035 + n2.r * 0.007;
+          float hG = n1.g * 0.06 + n2.g * 0.022;
+          float hP = n2.b * 0.004 + n3.r * 0.0015;
+          vec2 g = hgrad(vLoc, (sandK * hS + grassK * hG + paved * hP) * nearK);
+          vec3 east = vec3(up.y, -up.x, 0.0);
+          N = normalize(N - east * g.x - vec3(0.0, 0.0, 1.0) * g.y);
+          amb = ambCol * (0.76 + 0.24 * dot(N, up));
+          sun = sunCol * max(dot(N, ld), 0.0);
+          // 色のむら
+          col *= 1.0 + sandK * ((n1.a - 0.5) * 0.12 * nearK + (n3.g - 0.5) * 0.16 * fineK);
+          col = mix(col, col * vec3(0.76, 0.90, 0.68), grassK * nearK * smoothstep(0.38, 0.70, n1.b) * 0.55);
+          col = mix(col, col * vec3(1.14, 1.10, 0.84), grassK * nearK * smoothstep(0.55, 0.80, n0.b) * 0.35);
+          col *= 1.0 + (grassK * 0.34 + paved * 0.12) * fineK * (n3.b - 0.5);
+          // 乾いた砂のきらめき（粒ごとに向きの違う、ごく小さな鏡）
+          if (sandK * fineK > 0.0 && vMat.y > 0.0) {
+            vec2 cell = floor(mat2(0.8, -0.6, 0.6, 0.8) * pl * 73.0);
+            vec3 p3 = fract(vec3(cell.xyx) * 0.1031);          // 大きな値でも偏らない乱数
+            p3 += dot(p3, p3.yzx + 33.33);
+            float hs = fract((p3.x + p3.y) * p3.z);
+            vec3 gn = normalize(N + (fract(hs * vec3(13.1, 37.7, 91.3)) - 0.5) * 1.1);
+            extra += sandK * fineK * step(0.88, hs) * sunCol * sh * pow(max(dot(reflect(-ld, gn), V), 0.0), 40.0) * 2.4;
+          }
+        }
+        // 波打ち際: 波が引いたあとの濡れた砂（暗くなり、空と太陽を映す）
+        float swash = 0.16 + 0.10 * sin(time * 0.6 + pnoise(pl * 0.0625, 4.0) * 6.2831853);
+        float wet = sandK * (1.0 - smoothstep(swash, swash + 0.24, vMat.y)) * step(-0.03, vMat.y);
+        vec3 rf = reflect(-V, N);
+        if (wet > 0.001) {
+          col *= mix(1.0, 0.60, wet);
+          float fres = 0.03 + 0.55 * pow(1.0 - max(dot(V, N), 0.0), 4.0);
+          extra = extra * (1.0 - wet) + wet * (envSky(vWorld, rf) * fres + sunCol * sh * pow(max(dot(rf, ld), 0.0), 120.0) * 1.6);
+        }
+        // 舗装の照り返し
+        extra += paved * sunCol * sh * pow(max(dot(rf, ld), 0.0), 26.0) * 0.10;
+      }
+      vec3 light = amb + sun * sh + vec3(1.0, 0.82, 0.55) * lamp * night * 0.55;
       if (vSea > 0.05) {
         // 海底の光の網目（浅いほど強い。遠くでは消す）と、砂の小さな波紋
         float ck = smoothstep(0.15, 1.2, vSea) * exp(-vSea / 16.0) * clamp(1.0 - (fwidth(vSurf.x) + fwidth(vSurf.y)) / 2.5, 0.0, 1.0);
@@ -320,7 +415,7 @@
         light *= mix(vec3(1.0), exp(-vSea * vec3(0.16, 0.05, 0.035)), smoothstep(0.0, 0.6, vSea));
         col *= 1.0 - 0.06 * ck * (0.5 + 0.5 * sin(vSurf.y * 2.2 + vnoise(vSurf / 3.0) * 4.0));
       }
-      gl_FragColor = vec4(col * light, 1.0);
+      gl_FragColor = vec4(col * light + extra, 1.0);
       #include <fog_fragment>
     }`;
 
@@ -379,6 +474,19 @@
   const terrainChunks = [];
   // カメラから遠い地形は粗い格子に切り替える
   COL.updateTerrainLod = function (cam) {
+    {
+      // カメラの真下の地表の位置（一番近い陸地の座標で）
+      const th = Math.atan2(cam.y, cam.x);
+      let bi = 0, bu = 1e9;
+      for (let i = 0; i < 3; i++) {
+        let du = th - COL.landCenter(i);
+        du = (du - Math.round(du / (2 * Math.PI)) * 2 * Math.PI) * R;
+        if (Math.abs(du) < Math.abs(bu)) { bu = du; bi = i; }
+      }
+      const cx = Math.round(bu + bi * 5000), cz = Math.round(cam.z);
+      U.camSurf.value.set(cx, cz);
+      U.camMod.value.set(((cx % 64) + 64) % 64, ((cz % 64) + 64) % 64);
+    }
     for (let k = 0; k < terrainChunks.length; k++) {
       const t = terrainChunks[k], d = Math.hypot(t.x - cam.x, t.y - cam.y, t.z - cam.z);
       const g = d > 3800 ? t.far : t.near;
@@ -411,7 +519,8 @@
       const gr = COL.landGrid(i), H = gr.H, D = gr.D;
       for (let z0 = 0; z0 < NZ; z0 += ROWS) {
         const n = W * (ROWS + 1);
-        const pos = new Float32Array(n * 3), nrm = new Float32Array(n * 3), colr = new Float32Array(n * 3), surf = new Float32Array(n * 2), urb = new Float32Array(n), sea = new Float32Array(n);
+        const pos = new Float32Array(n * 3), nrm = new Float32Array(n * 3), colr = new Float32Array(n * 3), surf = new Float32Array(n * 2), urb = new Float32Array(n), sea = new Float32Array(n), gmat = new Float32Array(n * 2);
+        const level = COL.WATER[i].level;
         const zBase = COL.TERRAIN_Z0 + z0 * G.DZ;
         for (let r = 0; r <= ROWS; r++) {
           const jz = z0 + r, z = COL.TERRAIN_Z0 + jz * G.DZ;
@@ -430,6 +539,8 @@
             surf[v * 2] = u + i * 5000; surf[v * 2 + 1] = 0;
             urb[v] = COL.isUrban(i, u, z) ? 1 : 0;
             sea[v] = (i === 0 && z > TROPIC_Z && D[k] < 8 && h < 0) ? -h : 0;
+            gmat[v * 2] = ((D[k] < 0 && h < level) || COL.zoneOf(i, u, z) === 'beach') ? 1 : 0;
+            gmat[v * 2 + 1] = Math.max(-5, Math.min(20, h - level));
           }
         }
         const geo = new THREE.BufferGeometry();
@@ -439,6 +550,7 @@
         geo.setAttribute('surf', new THREE.BufferAttribute(surf, 2));
         geo.setAttribute('urban', new THREE.BufferAttribute(urb, 1));
         geo.setAttribute('seaD', new THREE.BufferAttribute(sea, 1));
+        geo.setAttribute('gmat', new THREE.BufferAttribute(gmat, 2));
         geo.setIndex(index);
         geo.computeBoundingSphere();
         const far = new THREE.BufferGeometry();
@@ -460,20 +572,23 @@
     attribute vec2 surf;
     attribute float depth;
     attribute float tropic;
-    varying vec2 vSurf;
+    uniform vec2 camSurf;
+    varying vec2 vSurf, vLoc;
     varying vec3 vWorld;
     varying float vDepth, vTrop;
     void main() {
       vec4 wp = modelMatrix * vec4(position, 1.0);
       vWorld = wp.xyz;
       vSurf = surf;
+      vLoc = surf - camSurf;
       vDepth = depth;
       vTrop = tropic;
       vec4 mvPosition = viewMatrix * wp;
       gl_Position = projectionMatrix * mvPosition;` + VS_TAIL + `
     }`;
-  const waterFS = FS_HEAD + GLSL_COMMON + GLSL_NOISE2 + `
-    varying vec2 vSurf;
+  const waterFS = FS_HEAD + GLSL_COMMON + GLSL_NOISE2 + GLSL_ULTRA + `
+    uniform vec2 camMod;
+    varying vec2 vSurf, vLoc;
     varying vec3 vWorld;
     varying float vDepth, vTrop;
     void main() {
@@ -486,6 +601,14 @@
       vec2 q = vSurf / 4.0;
       float nx = vnoise(q + vec2(time * 0.45, time * 0.20)) + vnoise(q * 2.7 - vec2(time * 0.30, time * 0.55)) * 0.5 - 0.75;
       float nz = vnoise(q + vec2(31.7 - time * 0.25, 9.2 + time * 0.40)) + vnoise(q * 2.7 + vec2(time * 0.50, 4.1 - time * 0.35)) * 0.5 - 0.75;
+      vec2 pp = vLoc + camMod;
+      if (ultra > 0.5) {
+        // 最高画質: 細かいさざ波を重ねる
+        float k2 = clamp(1.0 - (fwidth(vLoc.x) + fwidth(vLoc.y)) / 0.9, 0.0, 1.0);
+        vec4 w1 = tnoise(pp + vec2(time * 0.6, -time * 0.4), 0.7), w2 = tnoise(pp - vec2(time * 0.33, time * 0.2), 0.25);
+        nx += ((w1.r - 0.5) * 0.9 + (w2.g - 0.5) * 0.5) * k2;
+        nz += ((w1.b - 0.5) * 0.9 + (w2.a - 0.5) * 0.5) * k2;
+      }
       vec3 n = normalize(up + (east * nx + vec3(0.0, 0.0, nz)) * 0.16 * k);
       float cv = abs(dot(v, n));
       float fres = 0.04 + 0.90 * pow(1.0 - cv, 4.0);
@@ -501,10 +624,21 @@
         body = mix(vec3(0.16, 0.82, 0.78), vec3(0.02, 0.30, 0.66), dt) * (ambCol * 0.9 + sunCol * 0.75);
         a = max(mix(0.26, 0.88, 1.0 - exp(-max(vDepth, 0.0) / 14.0)), fres * 0.85);
       }
+      vec3 ld = sunDirAt(vWorld);
+      if (ultra > 0.5) sky = envSky(vWorld, reflect(-v, n * sign(dot(v, up)))) * 1.02;
       vec3 col = mix(body, sky, fres);
       // 太陽のきらめき
-      vec3 ld = sunDirAt(vWorld);
       col += sunCol * (pow(max(dot(reflect(-ld, n), v), 0.0), 180.0) * 2.2 * k + pow(max(dot(reflect(-ld, up), v), 0.0), 24.0) * 0.20);
+      if (ultra > 0.5) {
+        // 波打ち際の白い泡（ごく浅い所。寄せては返す）
+        float sw = 0.5 + 0.5 * sin(time * 0.6 + pnoise(mod(pp, 64.0) * 0.0625, 4.0) * 6.2831853);
+        float edge = 1.0 - smoothstep(0.0, 0.10 + 0.22 * sw, vDepth);
+        float lace = 0.0;
+        if (edge > 0.0) lace = smoothstep(0.35, 0.75, tnoise(pp + vec2(time * 0.08, -time * 0.05), 0.5).r * 0.6 + tnoise(pp - vec2(time * 0.07), 0.17).g * 0.4 + edge * 0.45);
+        float foam = edge * lace * clamp(1.0 - (fwidth(vLoc.x) + fwidth(vLoc.y)) / 3.0, 0.0, 1.0);
+        col = mix(col, vec3(0.94, 0.97, 0.98) * (ambCol * 0.95 + sunCol * 0.75), foam * 0.85);
+        a = max(a, foam * 0.85);
+      }
       gl_FragColor = vec4(col, a);
       #include <fog_fragment>
     }`;
@@ -669,16 +803,18 @@
   // ---- 雲: 地表から約1.3〜1.6km の高さに浮かぶ筒状の層 ----
   // 繰り返しても継ぎ目の出ないノイズ模様（雲用）。16マス周期
   function noiseTexture() {
-    const N = 256, CELLS = 16, data = new Uint8Array(N * N * 4), rand = COL.rng(4242), g = [];
-    for (let k = 0; k < CELLS * CELLS; k++) g.push(rand());
-    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
-      const fx = x / N * CELLS, fy = y / N * CELLS, xi = Math.floor(fx), yi = Math.floor(fy);
-      let tx = fx - xi, ty = fy - yi;
-      tx = tx * tx * (3 - 2 * tx); ty = ty * ty * (3 - 2 * ty);
+    const N = 256, CELLS = 16, data = new Uint8Array(N * N * 4);
+    for (let ch = 0; ch < 4; ch++) {
+      const rand = COL.rng(4242 + ch * 977), g = [];
+      for (let k = 0; k < CELLS * CELLS; k++) g.push(rand());
       const at = function (i, j) { return g[(i % CELLS) + (j % CELLS) * CELLS]; };
-      const v = (at(xi, yi) * (1 - tx) + at(xi + 1, yi) * tx) * (1 - ty) + (at(xi, yi + 1) * (1 - tx) + at(xi + 1, yi + 1) * tx) * ty;
-      const o = (y * N + x) * 4;
-      data[o] = data[o + 1] = data[o + 2] = Math.round(v * 255); data[o + 3] = 255;
+      for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+        const fx = x / N * CELLS, fy = y / N * CELLS, xi = Math.floor(fx), yi = Math.floor(fy);
+        let tx = fx - xi, ty = fy - yi;
+        tx = tx * tx * (3 - 2 * tx); ty = ty * ty * (3 - 2 * ty);
+        const v = (at(xi, yi) * (1 - tx) + at(xi + 1, yi) * tx) * (1 - ty) + (at(xi, yi + 1) * (1 - tx) + at(xi + 1, yi + 1) * tx) * ty;
+        data[(y * N + x) * 4 + ch] = Math.round(v * 255);
+      }
     }
     const tex = new THREE.DataTexture(data, N, N, THREE.RGBAFormat);
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
@@ -687,6 +823,7 @@
     tex.needsUpdate = true;
     return tex;
   }
+  U.noiseTex.value = noiseTexture();
 
   function buildClouds(scene) {
     const vs = VS_HEAD + `
@@ -720,7 +857,7 @@
     const geo = new THREE.CylinderGeometry(1, 1, 1, 128, 30, true);
     geo.rotateX(Math.PI / 2);
     const mat = material(vs, fs, { noiseMap: { value: null } }, { side: THREE.DoubleSide, transparent: true, depthWrite: false });
-    mat.uniforms.noiseMap.value = noiseTexture();
+    mat.uniforms.noiseMap.value = U.noiseTex.value;
     const clouds = [];
     COL.setClouds = function (on) { clouds.forEach(function (m) { m.visible = on; }); };
     [R - 1300, R - 1560].forEach(function (r) {
@@ -797,7 +934,7 @@
   };
 
   // city.js から使うシェーダーの部品
-  COL.GL = { U: U, material: material, COMMON: GLSL_COMMON, SHADOW: GLSL_SHADOW, NOISE2: GLSL_NOISE2, SPACE: GLSL_SPACE, CAUSTIC: GLSL_CAUSTIC,
+  COL.GL = { U: U, material: material, COMMON: GLSL_COMMON, SHADOW: GLSL_SHADOW, NOISE2: GLSL_NOISE2, ULTRA: GLSL_ULTRA, SPACE: GLSL_SPACE, CAUSTIC: GLSL_CAUSTIC,
              VS_HEAD: VS_HEAD, VS_TAIL: VS_TAIL, FS_HEAD: FS_HEAD };
 
   COL.buildWorld = function (scene) {

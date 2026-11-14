@@ -21,7 +21,12 @@
       vWorld = wp.xyz;
       vN = normalize(mat3(m) * (normal / (sc * sc)));
       // vUV: 壁に沿った長さ [m]。vT: その横向き, vB: 上向き。vSize: 面の半分の幅, 部品の高さ, バルコニー面なら 1
-      #ifdef ROUND
+      #ifdef CAR
+        // 車: uv.x に部品の番号（0 塗装, 1 ガラス, 2 黒い樹脂・タイヤ, 3 前照灯, 4 尾灯, 5 ホイール）
+        vUV = position.zy;
+        vec3 tO = vec3(0.0, 0.0, 1.0);
+        vSize = vec3(uv.x, 1.0, 0.0);
+      #elif defined(ROUND)
         vUV = vec2(uv.x * 3.14159265 * sc.x, position.y * sc.y);
         vec3 tO = vec3(normal.z, 0.0, -normal.x) + vec3(1e-4, 0.0, 0.0);
         vSize = vec3(1e4, sc.y, 0.0);
@@ -45,8 +50,8 @@
       gl_Position = projectionMatrix * mvPosition;` + GL.VS_TAIL + `
     }`;
   // 壁の種類: 0 オフィス（ガラス張り） 1 住まい（窓とバルコニー） 2 SF（暗いガラスと発光ライン）
-  //           3 無地 4 低層部（1階は店のガラス） 5 発光体 6 戸建て（板張り） 7 車両（窓の帯）
-  const cityFS = GL.FS_HEAD + GL.COMMON + GL.NOISE2 + GL.SHADOW + `
+  //           3 無地 4 低層部（1階は店のガラス） 5 発光体 6 戸建て（板張り） 7 車両（窓の帯） 8 自動車（部品ごとに塗装・ガラス・灯り）
+  const cityFS = GL.FS_HEAD + GL.COMMON + GL.NOISE2 + GL.ULTRA + GL.SHADOW + `
     uniform float fx;
     varying vec3 vWorld, vN, vCol, vT, vB, vSize;
     varying vec2 vUV, vTop;
@@ -103,15 +108,28 @@
       c *= 1.0 - 0.45 * dep;
       return vec4(c, lamp);
     }
+    // 向き n の面に当たる光。宇宙港ドックの中（z < 0）は昼夜に関係なく照明で明るい
+    vec3 shade(vec3 n, vec3 up, vec3 ld, float sh) {
+      vec3 l = ambCol * (0.76 + 0.24 * dot(n, up)) + sunCol * max(dot(n, ld), 0.0) * sh;
+      return mix(l, vec3(0.80, 0.83, 0.90) * (0.66 + 0.34 * dot(n, up)), step(vWorld.z, 0.5));
+    }
+    // ガラスや車体に映る景色: 空と、地平の近くに並ぶ建物の影絵
+    vec3 cityEnv(vec3 rf, vec3 up, float seed) {
+      vec3 c = envSky(vWorld, rf);
+      vec3 east = vec3(up.y, -up.x, 0.0);
+      float e = dot(rf, up), az = atan(dot(rf, east), rf.z);
+      float sky = 0.03 + 0.20 * vnoise(vec2(az * 7.0 + seed, seed * 0.37)) * vnoise(vec2(az * 2.3, seed + 4.0)) * 2.0;
+      vec3 bld = (ambCol * 0.62 + sunCol * 0.30) * mix(vec3(0.46, 0.48, 0.52), vec3(0.66, 0.64, 0.60), vnoise(vec2(az * 11.0, seed)));
+      bld += vec3(1.0, 0.85, 0.6) * night * 0.35 * step(0.72, vnoise(vec2(az * 60.0, e * 90.0)));
+      return mix(c, bld, smoothstep(sky + 0.015, sky - 0.015, e) * smoothstep(-0.30, -0.02, e));
+    }
     void main() {
       #include <logdepthbuf_fragment>
       vec3 N = normalize(vN), V = normalize(cameraPosition - vWorld);
       if (!gl_FrontFacing) N = -N;
       vec3 up = normalize(vec3(-vWorld.xy, 1e-3)), ld = sunDirAt(vWorld);
       float sh = shadowAt(vWorld, N, 0.7);
-      vec3 light = ambCol * (0.76 + 0.24 * dot(N, up)) + sunCol * max(dot(N, ld), 0.0) * sh;
-      // 宇宙港ドックの中（z < 0）は昼夜に関係なく照明で明るい
-      light = mix(light, vec3(0.80, 0.83, 0.90) * (0.66 + 0.34 * dot(N, up)), step(vWorld.z, 0.5));
+      vec3 light = shade(N, up, ld, sh);
       int st = int(vParm.x + 0.5);
       float seed = floor(vParm.y + 0.5);
       vec3 glowCol = vParm.w < 0.5 ? vec3(0.25, 0.90, 1.0) : vParm.w < 1.5 ? vec3(1.0, 0.35, 0.80) : vec3(1.0, 0.72, 0.28);
@@ -121,12 +139,45 @@
       } else if (st == 3) {
         vec2 q = vRoof > 0.9 ? vTop : vUV;
         col = vCol * (0.90 + 0.20 * vnoise(q / 1.6 + seed)) * light;
+      } else if (st == 8) {
+        // ---- 自動車: 艶のある塗装・ガラス・タイヤ・灯り ----
+        int part = int(vSize.x + 0.5);
+        vec3 rf = reflect(-V, N);
+        vec3 env = cityEnv(rf, up, seed);
+        float fres = pow(1.0 - max(dot(N, V), 0.0), 5.0);
+        float spec = pow(max(dot(rf, ld), 0.0), 240.0) * sh;
+        // 車の横の面か（ドアの継ぎ目・窓の柱を描く所）
+        float sideK = step(abs(dot(N, vB)), 0.6) * step(abs(dot(N, vT)), 0.5);
+        if (part == 1 && sideK > 0.5 && min(abs(vUV.x - 0.10), abs(vUV.x + 0.96)) < 0.045) part = 2;     // 窓の柱
+        if (part == 0) {
+          vec3 base = vCol * light + vCol * sunCol * sh * pow(max(dot(rf, ld), 0.0), 10.0) * 0.30;
+          col = base * (1.0 - 0.30 * fres) + env * (0.07 + 0.60 * fres) + sunCol * spec * 2.6;
+          // ドアの継ぎ目
+          float dl = min(abs(vUV.x + 0.80), min(abs(vUV.x - 0.10), abs(vUV.x - 1.00)));
+          col *= 1.0 - 0.65 * sideK * (1.0 - smoothstep(0.004, 0.014, dl)) * step(0.30, vUV.y) * clamp(1.0 - fwidth(vUV.x) / 0.03, 0.0, 1.0);
+        } else if (part == 1) {
+          col = vec3(0.035, 0.045, 0.055) * light + env * (0.10 + 0.80 * fres) + sunCol * spec * 3.2;
+        } else if (part == 2) {
+          col = vec3(0.045, 0.045, 0.05) * light * (0.85 + 0.30 * vnoise(vUV * 40.0));
+        } else if (part == 3) {
+          col = vec3(0.80, 0.82, 0.85) * light * 0.75 + env * 0.25 + vec3(1.0, 0.96, 0.85) * vParm.z * (0.20 + 1.7 * night);
+        } else if (part == 4) {
+          col = vec3(0.50, 0.03, 0.03) * light + vec3(1.0, 0.08, 0.05) * vParm.z * (0.12 + 1.2 * night);
+        } else {
+          col = vec3(0.60, 0.61, 0.64) * (light * 0.55 + env * 0.55) + sunCol * spec * 1.5;
+        }
       } else if (vRoof > 0.9) {
         // 屋上: 防水シートの継ぎ目とむら
         float rk = clamp(1.0 - fwidth(vTop.x) / 0.5, 0.0, 1.0);
         vec2 gq = abs(fract(vTop / 4.0) - 0.5) * 4.0;
         float seam = 1.0 - smoothstep(0.03, 0.09, min(gq.x, gq.y));
         col = mix(vec3(0.40, 0.41, 0.43), vCol, 0.2) * (0.84 + 0.30 * vnoise(vTop / 2.5 + seed)) * (1.0 - 0.18 * seam * rk) * light;
+        if (ultra > 0.5) {
+          // 最高画質: 砂利の粒と、水のたまった跡
+          float rf2 = clamp(1.0 - fwidth(vTop.x) / 0.06, 0.0, 1.0);
+          col *= 1.0 + (hash(floor(vTop * 45.0) + seed) - 0.5) * 0.22 * rf2;
+          col *= 1.0 - 0.16 * rk * smoothstep(0.62, 0.80, vnoise(vTop / 6.0 + seed * 1.7));
+        }
       } else {
         // ---- 壁と窓 ----
         vec2 uv = vUV;
@@ -172,6 +223,17 @@
         // 外壁の汚れ: 足元・雨だれ・大きなむら
         wall *= (1.0 - 0.20 * exp(-vUV.y / 1.6)) * (1.0 - 0.10 * fineK * smoothstep(0.6, 0.95, vnoise(vec2(uv.x * 1.7, uv.y * 0.04 + seed))))
               * (0.93 + 0.14 * vnoise(vUV / 11.0 + seed * 3.1));
+        vec3 wallLight = light;
+        if (ultra > 0.5 && fineK > 0.01) {
+          // 最高画質: 壁のざらつきと目地の凹凸（光の当たり方が細かく変わる）と、弱い照り返し
+          vec2 jd = (0.5 - abs(fract(uv / cs) - 0.5)) * cs;
+          float hW = vnoise(vUV * 4.0 + seed) * 0.014 + vnoise(vUV * 17.0 + seed) * 0.004 + smoothstep(0.0, 0.035, min(jd.x, jd.y)) * 0.012;
+          if (st == 6) hW += fract(uv.y / 0.21) * 0.014;
+          vec2 hg = hgrad(vUV, hW) * fineK;
+          vec3 Nw = normalize(N - vT * hg.x - vB * hg.y);
+          wallLight = shade(Nw, up, ld, sh) + sunCol * sh * pow(max(dot(reflect(-V, Nw), ld), 0.0), 18.0) * 0.10;
+          wall *= 1.0 + (vnoise(vUV * 9.0 + seed) - 0.5) * 0.08 * fineK;
+        }
         // 窓のマス。面の端で切れるマスと、屋根で切れる最上階のマスには窓を入れない
         vec2 g = uv / cs, id = floor(g), f = g - id;
         float ok = step(abs(id.x * cs.x), halfW - margin) * step(abs((id.x + 1.0) * cs.x), halfW - margin)
@@ -220,6 +282,11 @@
           sky = fogColor;
         #endif
         vec3 env = sky * mix(0.40, 1.22, clamp(dot(rf, up) * 0.6 + 0.5, 0.0, 1.0));
+        if (ultra > 0.5) {
+          // 最高画質: 空・雲・まわりの建物を映す。ガラス1枚ごとにわずかに傾きが違う（映り込みが少しずつずれる）
+          rf = reflect(-V, normalize(N + (vT * (h21(id + seed) - 0.5) + vB * (h21(id.yx + seed + 5.0) - 0.5)) * 0.035 * roomK));
+          env = cityEnv(rf, up, seed);
+        }
         float fres = refl + (1.0 - refl) * pow(1.0 - max(dot(V, N), 0.0), 4.0);
         // 夜は外が暗いので、明かりの点いた部屋は色付きガラス越しでも明るく見える
         vec3 glass = mix(tint * light * 0.5, inside, mix(trans, 0.95, night * lit)) * (1.0 - fres * (1.0 - 0.6 * night * lit)) + env * fres + sunCol * sh * pow(max(dot(rf, ld), 0.0), 60.0) * 1.2;
@@ -230,7 +297,7 @@
         if (mull > 0.0) frame = max(frame, step((0.5 - abs(fract(uv.x / mull) - 0.5)) * mull, 0.045));
         vec3 frameC = mix(vec3(0.26, 0.27, 0.29), vec3(0.80, 0.81, 0.82), step(0.5, fract(seed * 0.37))) * light;
         glass = mix(glass, frameC, frame * thinK);
-        col = mix(wall * light + sign * night, glass, m);
+        col = mix(wall * wallLight + sign * night, glass, m);
         if (st == 2) {
           float fx = fwidth(vUV.x) + 1e-4, fy = fwidth(vUV.y) + 1e-4;
           float gl = (1.0 - smoothstep(0.16 - fx, 0.30 + fx, abs(fract(vUV.x / 13.0) - 0.5) * 13.0)) * clamp(0.3 / fx, 0.0, 1.0);
@@ -705,6 +772,131 @@
     return geoFrom(buf);
   }
 
+
+  // ---- 自動車: 丸みのある車体・窓・タイヤ・灯り（前が +Z、地面が y = 0、単位は m） ----
+  //  車体は、前後に並べた断面（片側 10 点）をつないで作る。uv.x に部品の番号を入れる（色と艶はシェーダーで決める）
+  //   0 塗装（色は置くときに決める）, 1 ガラス, 2 黒い樹脂・タイヤ, 3 前照灯, 4 尾灯, 5 ホイール
+  const CAR_SPECS = {
+    // keys: [z, 半分の幅, 床の高さ, 窓の下の高さ, 屋根の高さ]
+    carA: { keys: [[-2.25, 0.74, 0.46, 0.80, 0.80], [-2.17, 0.84, 0.34, 0.90, 0.915], [-1.80, 0.89, 0.26, 0.93, 0.955], [-1.20, 0.90, 0.24, 0.93, 0.97],
+                   [-0.62, 0.90, 0.24, 0.92, 1.38], [-0.05, 0.90, 0.24, 0.91, 1.43], [0.42, 0.90, 0.24, 0.90, 1.39], [1.08, 0.90, 0.24, 0.90, 0.95],
+                   [1.70, 0.88, 0.26, 0.87, 0.90], [2.10, 0.84, 0.30, 0.80, 0.83], [2.25, 0.76, 0.40, 0.71, 0.72]],
+            wheelR: 0.33, arch: 0.40, wz: [1.38, -1.32], head: 0.60, tail: 0.69, mirror: [0.98, 0.95] },
+    carB: { keys: [[-2.15, 0.78, 0.48, 0.90, 0.92], [-2.05, 0.90, 0.34, 1.00, 1.04], [-1.72, 0.93, 0.30, 1.02, 1.60], [-0.40, 0.93, 0.28, 1.00, 1.66],
+                   [0.50, 0.93, 0.28, 0.99, 1.62], [1.10, 0.93, 0.28, 0.97, 1.02], [1.75, 0.91, 0.30, 0.92, 0.95], [2.08, 0.86, 0.36, 0.84, 0.86],
+                   [2.20, 0.78, 0.48, 0.72, 0.72]],
+            wheelR: 0.37, arch: 0.45, wz: [1.35, -1.30], head: 0.63, tail: 0.78, mirror: [1.08, 0.98] },
+  };
+  function carGeo(spec) {
+    const buf = { p: [], n: [], c: [], uv: [] };
+    const out = function (a, na, part) { buf.p.push(a[0], a[1], a[2]); buf.n.push(na[0], na[1], na[2]); buf.c.push(1, 1, 1); buf.uv.push(part, 0); };
+    const K = spec.keys, zMin = K[0][0], zMax = K[K.length - 1][0], axle = spec.wheelR;
+    // 断面を取る位置: 形の変わり目と、タイヤのまわり（車輪の入るくぼみを円く切る）
+    let zs = K.map(function (k) { return k[0]; });
+    spec.wz.forEach(function (zc) {
+      [-1, -0.85, -0.6, -0.3, 0, 0.3, 0.6, 0.85, 1].forEach(function (t) { zs.push(zc + t * spec.arch); });
+      zs.push(zc - spec.arch - 0.03, zc + spec.arch + 0.03);
+    });
+    zs = zs.filter(function (z) { return z >= zMin && z <= zMax; }).sort(function (a, b) { return a - b; })
+           .filter(function (z, k, l) { return k === 0 || z - l[k - 1] > 1e-4; });
+    const ring = function (z) {
+      let k = 0;
+      while (k < K.length - 2 && K[k + 1][0] < z) k++;
+      const f = Math.min(1, Math.max(0, (z - K[k][0]) / (K[k + 1][0] - K[k][0]))), L = function (j) { return K[k][j] + (K[k + 1][j] - K[k][j]) * f; };
+      const w = L(1), y0 = L(2), belt = L(3), roof = L(4);
+      let a = 0;
+      spec.wz.forEach(function (zc) { if (Math.abs(z - zc) <= spec.arch + 1e-6) a = axle + Math.sqrt(Math.max(0, spec.arch * spec.arch - (z - zc) * (z - zc))); });
+      const wi = a > 0 ? w - 0.27 : w * 0.90, ys = a > 0 ? Math.max(a, y0 + 0.09) : y0 + 0.09;
+      const t = Math.min(1, Math.max(0, (roof - belt) / 0.45)), wg = w * (0.985 - 0.045 * t), wr = w * (0.985 - 0.22 * t);
+      return { tall: roof - belt > 0.25, pts: [[0, y0], [wi, y0], [wi, ys], [w, ys], [w + 0.012, (ys + belt) / 2], [w * 0.985, belt], [wg, belt + 0.015],
+                                               [wr, roof - 0.05 * t], [wr * 0.84, roof], [0, roof + 0.02 + 0.03 * t]] };
+    };
+    const rings = zs.map(ring);
+    const GROUP = [0, 1, 2, 3, 3, 4, 5, 6, 6];
+    // 1回目: 面の向きを集めて、なめらかにつながる面どうしで法線をならす
+    const acc = new Map(), quads = [];
+    const key = function (k, j, g) { return k * 1000 + j * 10 + g; };
+    for (let k = 0; k < zs.length - 1; k++) for (let j = 0; j < 9; j++) {
+      const A = rings[k], Bq = rings[k + 1], g = GROUP[j];
+      const P = [[A.pts[j][0], A.pts[j][1], zs[k]], [Bq.pts[j][0], Bq.pts[j][1], zs[k + 1]], [Bq.pts[j + 1][0], Bq.pts[j + 1][1], zs[k + 1]], [A.pts[j + 1][0], A.pts[j + 1][1], zs[k]]];
+      let nn = V.cross(V.sub(P[2], P[0]), V.sub(P[3], P[1]));
+      const cen = V.mul(V.add(V.add(P[0], P[1]), V.add(P[2], P[3])), 0.25);
+      let flip = false;
+      if (V.dot(nn, V.sub(cen, [0, 0.75, cen[2]])) < 0) { nn = V.mul(nn, -1); flip = true; }
+      const part = j < 3 ? 2 : j < 6 ? 0 : j === 6 ? ((A.tall || Bq.tall) ? 1 : 0) : (A.tall !== Bq.tall ? 1 : 0);
+      const ks = [key(k, j, g), key(k + 1, j, g), key(k + 1, j + 1, g), key(k, j + 1, g)];
+      if (V.len(nn) > 1e-9) ks.forEach(function (q) { const o = acc.get(q) || [0, 0, 0]; acc.set(q, V.add(o, nn)); });
+      quads.push({ P: P, ks: ks, part: part, flip: flip });
+    }
+    // 2回目: 右半分と、それを左右に写した左半分を出す
+    quads.forEach(function (q) {
+      const nr = q.ks.map(function (kk) { const o = acc.get(kk); return o && V.len(o) > 1e-9 ? V.norm(o) : [0, 1, 0]; });
+      const order = q.flip ? [0, 2, 1, 0, 3, 2] : [0, 1, 2, 0, 2, 3];
+      for (let sd = 1; sd >= -1; sd -= 2) {
+        const idx = sd > 0 ? order : order.slice().reverse();
+        idx.forEach(function (v) { out([q.P[v][0] * sd, q.P[v][1], q.P[v][2]], [nr[v][0] * sd, nr[v][1], nr[v][2]], q.part); });
+      }
+    });
+    // 前後の端をふさぐ
+    [[0, -1], [zs.length - 1, 1]].forEach(function (e) {
+      const pts = rings[e[0]].pts, z = zs[e[0]], c = [0, (pts[0][1] + pts[9][1]) / 2, z], nz = [0, 0, e[1]];
+      for (let j = 0; j < 9; j++) for (let sd = 1; sd >= -1; sd -= 2) {
+        const a = [pts[j][0] * sd, pts[j][1], z], b = [pts[j + 1][0] * sd, pts[j + 1][1], z];
+        const ccw = (sd > 0) === (e[1] > 0);
+        out(c, nz, 0); out(ccw ? a : b, nz, 0); out(ccw ? b : a, nz, 0);
+      }
+    });
+    // 箱（灯り・グリル・ミラー）
+    const box = function (cx, cy, cz, sx, sy, sz, part) {
+      const g = new THREE.BoxGeometry(sx, sy, sz).toNonIndexed(), P = g.attributes.position, N = g.attributes.normal;
+      for (let k = 0; k < P.count; k++) out([P.getX(k) + cx, P.getY(k) + cy, P.getZ(k) + cz], [N.getX(k), N.getY(k), N.getZ(k)], part);
+    };
+    const kf = K[K.length - 1], kr = K[0];
+    for (let sd = -1; sd <= 1; sd += 2) {
+      box(sd * kf[1] * 0.70, spec.head, zMax - 0.03, kf[1] * 0.48, 0.11, 0.09, 3);
+      box(sd * kr[1] * 0.68, spec.tail, zMin + 0.03, kr[1] * 0.52, 0.11, 0.09, 4);
+      box(sd * (ring(spec.mirror[1]).pts[5][0] + 0.07), spec.mirror[0], spec.mirror[1], 0.13, 0.08, 0.06, 2);
+    }
+    box(0, kf[2] + 0.07, zMax - 0.02, kf[1] * 1.0, 0.09, 0.07, 2);            // グリル
+    box(0, kr[2] + 0.08, zMin + 0.02, 0.36, 0.11, 0.05, 5);                   // ナンバー
+    // タイヤとホイール
+    const NS = 16, R1 = spec.wheelR, R0 = R1 * 0.62;
+    spec.wz.forEach(function (zc) {
+      for (let sd = -1; sd <= 1; sd += 2) {
+        const xo = sd * (ring(zc).pts[3][0] - 0.03), xi = xo - sd * 0.24;
+        const P = function (x, r, a) { return [x, axle + Math.sin(a) * r, zc + Math.cos(a) * r]; };
+        // 表向きになる並びで三角形を出す（面の向き want に合わせる）
+        const tri = function (A, na, Bv, nb, C, nc, part, want) {
+          const fn = V.cross(V.sub(Bv, A), V.sub(C, A));
+          if (V.dot(fn, want) >= 0) { out(A, na, part); out(Bv, nb, part); out(C, nc, part); } else { out(A, na, part); out(C, nc, part); out(Bv, nb, part); }
+        };
+        for (let q = 0; q < NS; q++) {
+          const a0 = q / NS * TAU, a1 = (q + 1) / NS * TAU, n0 = [0, Math.sin(a0), Math.cos(a0)], n1 = [0, Math.sin(a1), Math.cos(a1)], nx = [sd, 0, 0];
+          const nm = [0, Math.sin((a0 + a1) / 2), Math.cos((a0 + a1) / 2)];
+          tri(P(xi, R1, a0), n0, P(xo, R1, a0), n0, P(xo, R1, a1), n1, 2, nm); tri(P(xi, R1, a0), n0, P(xo, R1, a1), n1, P(xi, R1, a1), n1, 2, nm);      // 踏面
+          tri(P(xo, R1, a0), nx, P(xo, R0, a0), nx, P(xo, R0, a1), nx, 2, nx); tri(P(xo, R1, a0), nx, P(xo, R0, a1), nx, P(xo, R1, a1), nx, 2, nx);      // 側面
+          tri(P(xo - sd * 0.02, R0, a0), nx, [xo - sd * 0.02, axle, zc], nx, P(xo - sd * 0.02, R0, a1), nx, 5, nx);                                      // ホイール
+        }
+      }
+    });
+    return geoFrom(buf);
+  }
+  // 遠く用の車: 箱2つ（車体と窓まわり）
+  function carGeoLo(spec) {
+    const buf = { p: [], n: [], c: [], uv: [] };
+    const K = spec.keys, zMin = K[0][0], zMax = K[K.length - 1][0], mid = K[Math.floor(K.length / 2)];
+    const box = function (x0, x1, y0, y1, z0, z1, part) {
+      const g = new THREE.BoxGeometry(x1 - x0, y1 - y0, z1 - z0).toNonIndexed(), P = g.attributes.position, N = g.attributes.normal;
+      for (let k = 0; k < P.count; k++) {
+        buf.p.push(P.getX(k) + (x0 + x1) / 2, P.getY(k) + (y0 + y1) / 2, P.getZ(k) + (z0 + z1) / 2);
+        buf.n.push(N.getX(k), N.getY(k), N.getZ(k)); buf.c.push(1, 1, 1); buf.uv.push(part, 0);
+      }
+    };
+    box(-mid[1], mid[1], 0.22, mid[3], zMin, zMax, 0);
+    box(-mid[1] * 0.86, mid[1] * 0.86, mid[3], mid[4], zMin + (zMax - zMin) * 0.20, zMin + (zMax - zMin) * 0.66, 1);
+    return geoFrom(buf);
+  }
+
   const CORALS = { coralBrain: coralBrain, coralBranch: coralBranch, coralTable: coralTable, coralTube: coralTube, coralFan: coralFan, anemone: anemoneGeo, rock: rockGeo };
   const TREE_KINDS = ['broad', 'broadLo', 'broad2', 'broad2Lo', 'palm', 'palmLo', 'conifer', 'coniferLo', 'shrub', 'shrubLo', 'hedge'];
   function initParts(renderer) {
@@ -739,6 +931,8 @@
     MAT.box = flat; MAT.taper = flat; MAT.cyl = round; MAT.cone = round; MAT.ring = round; MAT.dome = round;
     TREE_KINDS.forEach(function (k) { MAT[k] = tree; });
     MAT.gable = flat;
+    const carMat = GL.material(cityVS, cityFS, null, { defines: { CAR: 1 } });
+    for (const k in CAR_SPECS) { UNIT[k] = carGeo(CAR_SPECS[k]); UNIT[k + 'Lo'] = carGeoLo(CAR_SPECS[k]); MAT[k] = MAT[k + 'Lo'] = carMat; }
     MAT.bowl = GL.material(cityVS, cityFS, null, { defines: { ROUND: 1 }, side: THREE.DoubleSide });
   }
 
@@ -786,7 +980,7 @@
         return mesh;
       };
       const hi = make(kind);
-      if (UNIT[kind + 'Lo']) lod.push({ hi: hi, lo: make(kind + 'Lo') });
+      if (UNIT[kind + 'Lo']) lod.push({ hi: hi, lo: make(kind + 'Lo'), car: kind.slice(0, 3) === 'car' });
     }
     return lod;
   };
@@ -1391,8 +1585,8 @@
 
   function addCar(bag, r, i, u, z, yaw) {
     const y = COL.groundH(COL.landTheta(i, u), z);
-    bag.add('box', i, u, z, y + 0.25, 1.8, 0.72, 4.3, pick(CARC, r()), 3, 1, 0, 0, yaw);
-    bag.add('box', i, u, z, y + 0.95, 1.6, 0.55, 2.3, [0.12, 0.14, 0.17], 3, 1, 0, 0, yaw);
+    const rv = r();
+    bag.add((rv * CARC.length) % 1 < 0.38 ? 'carB' : 'carA', i, u, z, y, 1, 1, 1, pick(CARC, rv), 8, Math.floor(rv * 97), 0, 0, yaw);
   }
   // 中心市街以外の街区の細かい物: 庭木、車、プール、校庭、配管など
   function emitBlockExtras(plan, bag, r, tk) {
@@ -1637,17 +1831,19 @@
   // ================= 近くの区画だけ細かい物を出す =================
   const QUALITY = [
     // life: 住民・車・鳥・魚の数の割合 / res: 解像度の上限 / fx: 窓の部屋・水中の光の網目 / whales: クジラの有無
-    // far: これより遠くは描かず霧で隠す（0 = コロニー全体を描く） / tree: 木を細かい形で描く距離
-    { name: '最軽量', near: 260, shadow: 0, small: 400, life: 0.15, res: 0.5, fx: 0, whales: 0, far: 1000, tree: 90 },
-    { name: '低', near: 380, shadow: 0, small: 2200, life: 0.5, res: 1, fx: 1, whales: 1, far: 0, tree: 160 },
-    { name: '中', near: 650, shadow: 300, small: 3600, life: 1, res: 1, fx: 1, whales: 1, far: 0, tree: 210 },
-    { name: '高', near: 1000, shadow: 440, small: 6000, life: 1, res: 1, fx: 1, whales: 1, far: 0, tree: 210 },
+    // car: 車を細かい形で描く距離 / sres: 影の画像の細かさ / ultra: 細かな凹凸・映り込み・画面全体の仕上げ（js/post.js）
+    { name: '最軽量', near: 260, shadow: 0, small: 400, life: 0.15, res: 0.5, fx: 0, whales: 0, far: 1000, tree: 90, car: 0, sres: 2048, ultra: 0 },
+    { name: '低', near: 380, shadow: 0, small: 2200, life: 0.5, res: 1, fx: 1, whales: 1, far: 0, tree: 160, car: 0, sres: 2048, ultra: 0 },
+    { name: '中', near: 650, shadow: 300, small: 3600, life: 1, res: 1, fx: 1, whales: 1, far: 0, tree: 210, car: 90, sres: 2048, ultra: 0 },
+    { name: '高', near: 1000, shadow: 440, small: 6000, life: 1, res: 1, fx: 1, whales: 1, far: 0, tree: 210, car: 140, sres: 2048, ultra: 0 },
+    { name: '最高', near: 1000, shadow: 440, small: 6000, life: 1, res: 1, fx: 1, whales: 1, far: 0, tree: 240, car: 200, sres: 2048, ultra: 1 },
   ];
   COL.QUALITIES = QUALITY;
   let qi = 2, sceneRef = null, rendererRef = null, tick = 1, started = false;
   COL.qualityName = function () { return QUALITY[qi].name + (QUALITY[qi].shadow ? '・影あり' : '・影なし'); };
   function applyQuality() {
     const Q = QUALITY[qi];
+    U.ultra.value = Q.ultra; COL.postOn = !!Q.ultra; COL.carDist = Q.car;
     U.fx.value = Q.fx; COL.lifeScale = Q.life; COL.whalesOn = Q.whales; COL.resCap = Q.res;
     COL.drawFar = Q.far; COL.liteFog = Q.far ? 1.9 / Q.far : 0;              // 描く距離の端でほぼ霧になる濃さ
     if (COL.setClouds) COL.setClouds(!Q.far);
@@ -1708,7 +1904,7 @@
       grp.userData.dist = dist;
       // 木は 210m より先では簡略な形にする
       const lod = grp.userData.lod;
-      for (let k = 0; k < lod.length; k++) { lod[k].hi.visible = dist < Q.tree; lod[k].lo.visible = dist >= Q.tree; }
+      for (let k = 0; k < lod.length; k++) { const lim = lod[k].car ? Q.car : Q.tree; lod[k].hi.visible = dist < lim; lod[k].lo.visible = dist >= lim; }
     });
     // 建物の本体は近いまとまりから先に描く（奥のまとまりの、隠れた画素を計算しないで済む）
     for (let k = 0; k < regionList.length; k++) {
@@ -1742,7 +1938,9 @@
     const el = Math.round(U.sunElev.value / 0.004) * 0.004, cs = Math.cos(thc), sn = Math.sin(thc);
     const ld = [-cs * Math.sin(el), -sn * Math.sin(el), -Math.cos(el)], east = [-sn, cs, 0], w = COL.V.cross(ld, east);
     // 影の模様がちらつかないよう、撮る位置を1画素の大きさに丸める
-    const texel = 2 * S / 2048, P = [p.x, p.y, p.z];
+    if (shadowRT.width !== Q.sres) shadowRT.setSize(Q.sres, Q.sres);
+    U.shadowRes.value = Q.sres;
+    const texel = 2 * S / Q.sres, P = [p.x, p.y, p.z];
     const ce = COL.V.dot(P, east), cw = COL.V.dot(P, w);
     const de = ce - Math.round(ce / texel) * texel, dw = cw - Math.round(cw / texel) * texel;
     _c.set(P[0] - east[0] * de - w[0] * dw, P[1] - east[1] * de - w[1] * dw, P[2] - east[2] * de - w[2] * dw);

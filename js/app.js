@@ -27,7 +27,7 @@ function appMain() {
   }
   let savedMode = 'auto';
   try { savedMode = localStorage.getItem('colQualityMode') || 'auto'; } catch (e) {}
-  if (!/^(auto|[0-3])$/.test(savedMode)) savedMode = 'auto';
+  if (!/^(auto|[0-4])$/.test(savedMode)) savedMode = 'auto';
   // 軽い画質（最軽量・低）では、縁のギザギザを消す処理（アンチエイリアス）を使わない。これは作るときにしか決められない
   const resolveMode = function (m) { return m === 'auto' ? detectQuality() : parseInt(m, 10); };
   const AA = q.get('q') ? parseInt(q.get('q'), 10) >= 2 : resolveMode(savedMode) >= 2;
@@ -62,6 +62,7 @@ function appMain() {
     1: '描く距離を短くし、影を切り、人や車を半分にします。',
     2: '標準の画質です。',
     3: '遠くまで描き、影も広く出します。',
+    4: '高性能なパソコン向け。砂・芝・壁の細かな凹凸、ガラスや車体・濡れた砂への映り込み、波打ち際の泡、物の隅の陰り、光のにじみを加えます。',
   };
   function chooseQuality(mode) {
     qAuto = mode === 'auto';
@@ -432,7 +433,9 @@ function appMain() {
     COL.updateWhales(dt, player, camera, renderer);
     COL.updateSound(dt, player);
     COL.updateCity(dt, scene, camera);
-    renderer.render(scene, camera);
+    // 最高画質は、画面全体の仕上げ（js/post.js）を通して描く
+    if (COL.postOn && COL.renderPost) COL.renderPost(renderer, scene, camera);
+    else { renderer.info.autoReset = true; renderer.render(scene, camera); }
     if (shotQueued) {                                     // 描いた直後でないと画像を取り出せない
       shotQueued = false;
       renderer.domElement.toBlob(function (blob) {
