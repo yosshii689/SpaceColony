@@ -351,7 +351,7 @@
     B(-11.4, -9.9, 0.45, 0.7, -2.4, -1.9, SOFA); B(-11.4, -9.9, 0.45, 0.7, 1.9, 2.4, SOFA);
     BS(-13.6, -12.6, 0, 0.4, -0.9, 0.9, DARKW);
     B(-14.6, -8.6, 0, 0.02, -3.4, 3.4, [0.55, 0.30, 0.28]);                                       // 敷物
-    B(-15.68, -15.6, 1.0, 2.3, -1.3, 1.3, [0.05, 0.06, 0.08]); B(-15.6, -15.58, 1.05, 2.25, -1.25, 1.25, [0.25, 0.45, 0.70], 4, undefined, 0.35);
+    B(-15.68, -15.6, 1.0, 2.3, -1.3, 1.3, [0.05, 0.06, 0.08]); B(-15.6, -15.58, 1.05, 2.25, -1.25, 1.25, [0.03, 0.035, 0.04]);
     BS(-15.68, -15.2, 0, 0.5, -1.8, 1.8, DARKW);
     C('cyl', -14.6, 0, 9.6, 0.7, 0.6, [0.80, 0.78, 0.74]); C('dome', -14.6, 0.6, 9.6, 1.5, 1.0, [0.22, 0.50, 0.24]);     // 鉢植え
     C('cyl', 2.2, 0, -9.8, 0.7, 0.6, [0.80, 0.78, 0.74]); C('dome', 2.2, 0.6, -9.8, 1.4, 0.9, [0.22, 0.50, 0.24]);
@@ -398,6 +398,8 @@
     for (let k = n0; k < grp.children.length; k++) grp.children[k].renderOrder = 3;
     sceneRef.add(grp);
     grp.updateMatrixWorld(true);
+    // 居間のテレビの画面（動画）。E でつけたり消したりする（js/tv.js）
+    COL.addTV(grp, 'home', 2.42, 1.14, [-15.575, 1.65, 0], Math.PI / 2, V.add(O, V.add(V.mul(E, -15.5), V.mul(UP, 1.65))));
     syncLamps();
   }
 
@@ -514,6 +516,12 @@
       const on = COL.save.lamps[best.room];
       if (use) { COL.save.lamps[best.room] = on ? 0 : 1; syncLamps(); COL.storeSave(); return { text: '', used: true }; }
       return { text: 'E: ' + ROOMS[best.room] + 'の明かりを' + (on ? '消す' : 'つける'), used: false };
+    }
+    // 居間のテレビ（ソファのあたりで）
+    if (e[1] < FH && Math.hypot(e[0] + 12.0, e[2]) < 3.6) {
+      const on = COL.tvOn('home');
+      if (use) { COL.setTV('home', !on); return { text: '', used: true }; }
+      return { text: 'E: テレビを' + (on ? '消す' : 'つける'), used: false };
     }
     // ベッド
     for (let k = 0; k < beds.length; k++) {

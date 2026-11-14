@@ -79,6 +79,7 @@ js/vehicles.js    車・電車・駅
 js/space.js       宇宙港・採掘船・隕石
 js/mansion.js     豪邸
 js/hotel.js       ホテルの最上階スイート
+js/tv.js          家とホテルのテレビ（動画ファイルを映す）
 js/whales.js      クジラ
 vendor/           three.js（同梱）
 ```

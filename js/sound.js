@@ -87,6 +87,7 @@
   }
   COL.toggleMute = function () {
     muted = !muted;
+    COL.muted = muted;                             // テレビの音も消す（js/tv.js）
     if (master) master.gain.setTargetAtTime(muted ? 0 : 0.55, ctx.currentTime, 0.1);
     return muted;
   };

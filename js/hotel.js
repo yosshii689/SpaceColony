@@ -334,6 +334,8 @@
     for (let k = n0; k < grp.children.length; k++) grp.children[k].renderOrder = 3;
     sceneRef.add(grp);
     grp.updateMatrixWorld(true);
+    // テレビの画面（動画）。芯の西の面、黒い枠の中
+    COL.addTV(grp, 'hotel', 3.1, 1.62, [-cx - 0.095, 1.85, 0], -Math.PI / 2, V.add(O, V.add(V.mul(E, -cx - 0.1), V.mul(UP, 1.85))));
   }
 
   // ================= 玄関の案内板 =================
@@ -468,8 +470,8 @@
       return { text: 'E: 部屋の明かりを' + (on ? '消す' : 'つける'), used: false };
     }
     if (best.kind === 'tv') {
-      const on = U.tv.value > 0.5;
-      if (use) { U.tv.value = on ? 0 : 1; return { text: '', used: true }; }
+      const on = COL.tvOn('hotel');
+      if (use) { COL.setTV('hotel', !on); return { text: '', used: true }; }
       return { text: 'E: テレビを' + (on ? '消す' : 'つける'), used: false };
     }
     if (best.kind === 'jacuzzi') {

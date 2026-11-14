@@ -460,6 +460,7 @@ function appMain() {
     COL.updateEnv(dt, keys.KeyT ? 90 : 1);                // T を押している間は時刻を早送り
     if (COL.clock < clock0) { COL.save.day++; COL.storeSave(); }     // 0時をまたいだら日付を進める
     updateCamera();
+    COL.updateTV(player, camera);                       // テレビの音と、重ねて映す動画の位置（js/tv.js）
     COL.updateLife(dt, player);
     COL.updateWhales(dt, player, camera, renderer);
     COL.updateSound(dt, player);
