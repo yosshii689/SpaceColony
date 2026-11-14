@@ -299,5 +299,26 @@ ok('数値が壊れていない（ドック）', p.pos.concat(p.vel, p.up, p.fwd
      best.st.name + ' 横 ' + lat2.toFixed(2) + ' m');
 }
 
+// ---- 薄い柵: 1歩が大きく（低fps・ダッシュ）ても突き抜けない ----
+{
+  const saved = [COL.groundH, COL.waterAt, COL.pushOut, COL.solidTop, COL.solidCeil];
+  COL.groundH = () => 0; COL.waterAt = () => null; COL.solidTop = null; COL.solidCeil = null;
+  const lc0 = COL.landCoord(-Math.PI / 2), wallZ0 = 15010, wallZ1 = 15010.3, PAD = 0.45;
+  // city.js の pushOut と同じ作り: 壁の外側 PAD まで膨らませた箱の中に入ったら、一番近い面の外へ出す
+  COL.pushOut = function (pos) {
+    const r = Math.hypot(pos[0], pos[1]), h = COL.R - r;
+    if (h >= 3 - 1.0 || h + 1.8 <= 0) return;
+    const a = pos[2] - (wallZ0 - PAD), b = (wallZ1 + PAD) - pos[2];
+    if (a <= 0 || b <= 0) return;
+    pos[2] += a < b ? -a : b;
+  };
+  for (const dt of [1 / 60, 0.1, 0.25]) {
+    const q = COL.createPlayer(-Math.PI / 2, 15000, 0);
+    for (let i = 0; i < Math.round(8 / dt); i++) COL.stepPlayer(q, { f: 1, run: true }, dt);
+    ok('柵を越えない (dt=' + dt.toFixed(3) + ')', COL.toCyl(q.pos).z < wallZ0, COL.toCyl(q.pos).z.toFixed(2));
+  }
+  COL.groundH = saved[0]; COL.waterAt = saved[1]; COL.pushOut = saved[2]; COL.solidTop = saved[3]; COL.solidCeil = saved[4];
+}
+
 console.log(fail ? '\n' + fail + ' 件失敗' : '\nすべて成功');
 process.exit(fail ? 1 : 0);

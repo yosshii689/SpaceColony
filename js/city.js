@@ -1542,6 +1542,16 @@
       const p = { u: u, z0: z - 14, len: 150, top: 1.3 };
       addSolid(0, u - 2.5, u + 2.5, p.z0, p.z0 + p.len, p.top - 0.35, p.top);
       addSolid(0, u - 7, u + 7, p.z0 + p.len - 1, p.z0 + p.len + 13, p.top - 0.35, p.top);
+      // 柵（ジャンプでも越えられないよう、見えている柵より高く判定する）
+      const zA = p.z0, zB = p.z0 + p.len - 1, zC = p.z0 + p.len + 13, T = 0.2;
+      const rail = function (u0, u1, z0, z1) { addSolid(0, u0, u1, z0, z1, p.top - 0.1, p.top + 3); };
+      for (let sd = -1; sd <= 1; sd += 2) {
+        rail(u + sd * 2.4 - T, u + sd * 2.4 + T, zA, zB);               // 通路の両側
+        rail(u + sd * 7 - T, u + sd * 7 + T, zB, zC);                   // 先端の広場の両側
+        rail(sd > 0 ? u + 2.4 : u - 7, sd > 0 ? u + 7 : u - 2.4, zB - T, zB + T);   // 広場の手前（通路の両脇）
+      }
+      rail(u - 7, u - 1.6, zC - T, zC + T); rail(u + 1.6, u + 7, zC - T, zC + T);   // 先端（まん中は飛込み板のために開ける）
+      addSolid(0, u - 0.6, u + 0.6, zC - 0.3, zC + 4.2, p.top - 0.1, p.top + 0.12);   // 飛込み板
       return p;
     });
     return piers;
@@ -1563,7 +1573,26 @@
       bag.add('box', i, p.u - 2.3, p.z0 + s, p.top + 4.0, 0.5, 0.5, 0.5, [1.0, 0.88, 0.66], 5, 0, 1.6);
     }
     // 先端のあずまや
-    bag.add('cyl', i, p.u, ze, p.top - 0.35, 15, 0.35, 15, WOOD, 3, 12);
+    bag.add('box', i, p.u, ze, p.top - 0.35, 14, 0.35, 14, WOOD, 3, 12);
+    {
+      const zB = p.z0 + p.len - 1, zC = p.z0 + p.len + 13, post = function (uu, zz) { bag.add('box', i, uu, zz, p.top, 0.09, 1.05, 0.09, WHITE, 3, 14); };
+      const run = function (ua, ub, za, zb) {        // 手すり（上と中ほどの2本）と、3m ごとの支柱
+        const uc = (ua + ub) / 2, zc2 = (za + zb) / 2, lu = Math.abs(ub - ua), lz = Math.abs(zb - za);
+        bag.add('box', i, uc, zc2, p.top + 1.0, Math.max(lu, 0.09), 0.09, Math.max(lz, 0.09), WHITE, 3, 14);
+        bag.add('box', i, uc, zc2, p.top + 0.5, Math.max(lu, 0.06), 0.06, Math.max(lz, 0.06), WHITE, 3, 14);
+        const n = Math.max(1, Math.round(Math.max(lu, lz) / 3));
+        for (let k = 0; k <= n; k++) post(ua + (ub - ua) * k / n, za + (zb - za) * k / n);
+      };
+      for (let sd = -1; sd <= 1; sd += 2) {
+        run(p.u + sd * 7, p.u + sd * 7, zB, zC);
+        run(sd > 0 ? p.u + 2.4 : p.u - 7, sd > 0 ? p.u + 7 : p.u - 2.4, zB, zB);
+      }
+      run(p.u - 7, p.u - 1.6, zC, zC); run(p.u + 1.6, p.u + 7, zC, zC);
+      // 飛込み板: 先端に向かって少し反らせ、先の端に滑り止め
+      bag.add('box', i, p.u, zC + 1.9, p.top, 1.2, 0.12, 4.5, [0.92, 0.93, 0.95], 3, 14);
+      bag.add('box', i, p.u, zC + 3.7, p.top + 0.12, 1.2, 0.03, 1.0, [0.20, 0.55, 0.85], 3, 14);
+      bag.add('box', i, p.u, zC - 0.2, p.top - 0.05, 1.0, 0.12, 0.9, [0.55, 0.56, 0.60], 3, 1);
+    }
     for (let q = 0; q < 6; q++) {
       const a = q / 6 * TAU;
       bag.add('cyl', i, p.u + Math.cos(a) * 5.4, ze + Math.sin(a) * 5.4, p.top, 0.3, 3.4, 0.3, WHITE, 3, 14);

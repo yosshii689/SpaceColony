@@ -176,6 +176,9 @@
     const floatH = water ? water.level - FLOAT_DEPTH : 0;
     p.swim = !!water && water.depth > FLOAT_DEPTH && h0 <= floatH + 0.3;
     let jumped = false;
+    // 飛行をやめた瞬間: 飛行中の上下の勢いは捨てて、そこから自由落下を始める
+    if (p.wasFly && !p.fly) { const vu = V.dot(p.vel, p.up); p.vel = V.sub(p.vel, V.mul(p.up, vu)); }
+    p.wasFly = !!p.fly;
 
     if (p.fly) {
       // ドックの中と入口付近はゆっくり漂う
@@ -231,7 +234,17 @@
     }
 
     // 建物の壁にはめり込まない（壁に沿って横へ押し出す）
-    if (COL.pushOut) COL.pushOut(p.pos);
+    // （1歩が大きいと薄い柵を飛び越えてしまうので、30cm ずつ進めながら押し戻す。押し戻された位置から続きを進む）
+    if (COL.pushOut) {
+      const dx = p.pos[0] - old[0], dy = p.pos[1] - old[1], dz = p.pos[2] - old[2];
+      const n = Math.min(60, Math.max(1, Math.ceil(Math.hypot(dx, dy, dz) / 0.3)));
+      const q = old.slice();
+      for (let k = 0; k < n; k++) {
+        q[0] += dx / n; q[1] += dy / n; q[2] += dz / n;
+        COL.pushOut(q);
+      }
+      p.pos = q;
+    }
 
     // 急すぎる上り坂には進めない（その場にとどまり、上下の動きだけ残す）
     const tg = terrainAt(p.pos), tg0 = terrainAt(old);
