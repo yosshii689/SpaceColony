@@ -263,49 +263,332 @@
   }
 
   // ================= 魚（南国の海のサンゴ礁のまわり） =================
-  //  群れごとに種類を決め、サンゴの多い浅い所を輪を描くように泳ぐ。体と尾びれを別に動かして、尾を振って泳ぐ
-  const SCHOOLS = 10, FPER = 10;
+  //  群れごとに種類を決め、サンゴの多い浅い所を輪を描くように泳ぐ
+  //  体は種類ごとに作る（断面をつないだ胴体・背びれ・しりびれ・尾びれ・胸びれ・腹びれ・目）。体のしなりと尾の振りは頂点シェーダーで
+  //  模様（帯・斑点・うろこ）はフラグメントシェーダーで描く。頂点の色 r: 部品（0 胴体, 1 ひれ, 2 目, 3 尾びれ）, g: ひれの付け根 0 → ふち 1, b: 胸びれ（ひらひら動く）
+  const SCHOOLS = 12, FPER = 12;
   const FISH = [
-    { name: 'キイロハギ', body: [1.0, 0.86, 0.10], tail: [1.0, 0.86, 0.10], s: 0.34, n: 8 },
-    { name: 'ナンヨウハギ', body: [0.10, 0.32, 0.95], tail: [1.0, 0.82, 0.12], s: 0.36, n: 7 },
-    { name: 'カクレクマノミ', body: [1.0, 0.45, 0.08], tail: [1.0, 1.0, 1.0], s: 0.22, n: 4 },
-    { name: 'ブダイ', body: [0.25, 0.78, 0.72], tail: [0.95, 0.45, 0.72], s: 0.55, n: 3 },
-    { name: 'ギンガメアジ', body: [0.80, 0.84, 0.90], tail: [0.62, 0.66, 0.74], s: 0.48, n: 10 },
-    { name: 'チョウチョウウオ', body: [0.98, 0.95, 0.80], tail: [0.98, 0.80, 0.10], s: 0.28, n: 6 },
+    { name: 'キイロハギ', s: 0.34, n: 8 },
+    { name: 'ナンヨウハギ', s: 0.36, n: 7 },
+    { name: 'カクレクマノミ', s: 0.22, n: 4 },
+    { name: 'ブダイ', s: 0.55, n: 3 },
+    { name: 'ギンガメアジ', s: 0.48, n: 11 },
+    { name: 'チョウチョウウオ', s: 0.28, n: 6 },
   ];
-  let fishB = null, fishT = null;
-  const schools = [];
-  // 頂点の列から、外向きの法線をつけた形を作る
-  function faceted(tris, center) {
-    const pos = [], nrm = [];
-    for (let k = 0; k < tris.length; k += 3) {
-      let a = tris[k], b = tris[k + 1], c = tris[k + 2], nn = V.norm(V.cross(V.sub(b, a), V.sub(c, a)));
-      const m = V.mul(V.add(V.add(a, b), c), 1 / 3);
-      if (center && V.dot(nn, V.sub(m, center)) < 0) { const t = b; b = c; c = t; nn = V.mul(nn, -1); }
-      [a, b, c].forEach(function (q) { pos.push(q[0], q[1], q[2]); nrm.push(nn[0], nn[1], nn[2]); });
+  // 形: prof は [t, 背の高さ, 腹の深さ, 半分の幅]（t: 尾の付け根 0 → 鼻先 1。体長 1 に対して）
+  //  dorsal / anal: ひれの [t, 高さ] の列（いくつかに分かれていてよい）。tail: H 尾びれの半分の高さ, L 長さ, fork 切れ込み（負なら丸い）
+  //  eye: [t, 高さ, 半径], amp: 尾を振る大きさ, freq: 振る速さ, pect: 胸びれの長さ
+  const SHAPE = [
+    { prof: [[0, 0.045, 0.045, 0.028], [0.15, 0.14, 0.13, 0.06], [0.35, 0.24, 0.22, 0.08], [0.55, 0.26, 0.23, 0.08], [0.72, 0.22, 0.19, 0.072], [0.86, 0.13, 0.11, 0.055], [0.96, 0.05, 0.045, 0.03], [1, 0.012, 0.012, 0.01]],
+      dorsal: [[[0.12, 0.02], [0.30, 0.13], [0.55, 0.12], [0.80, 0.05], [0.86, 0.0]]], anal: [[[0.12, 0.02], [0.30, 0.12], [0.50, 0.10], [0.64, 0.0]]],
+      tail: { H: 0.13, L: 0.17, fork: 0.12 }, eye: [0.79, 0.075, 0.028], amp: 0.035, freq: 8, pect: 0.10 },
+    { prof: [[0, 0.04, 0.04, 0.03], [0.2, 0.12, 0.11, 0.065], [0.45, 0.19, 0.18, 0.08], [0.65, 0.20, 0.18, 0.08], [0.82, 0.16, 0.14, 0.07], [0.94, 0.09, 0.08, 0.05], [1, 0.02, 0.02, 0.015]],
+      dorsal: [[[0.10, 0.02], [0.25, 0.06], [0.70, 0.055], [0.84, 0.0]]], anal: [[[0.10, 0.02], [0.25, 0.05], [0.50, 0.04], [0.60, 0.0]]],
+      tail: { H: 0.14, L: 0.18, fork: 0.32 }, eye: [0.83, 0.045, 0.03], amp: 0.05, freq: 9, pect: 0.11 },
+    { prof: [[0, 0.05, 0.05, 0.035], [0.2, 0.11, 0.10, 0.07], [0.5, 0.165, 0.15, 0.09], [0.75, 0.16, 0.14, 0.085], [0.9, 0.12, 0.10, 0.07], [0.98, 0.06, 0.05, 0.04], [1, 0.02, 0.015, 0.012]],
+      dorsal: [[[0.08, 0.02], [0.20, 0.085], [0.42, 0.07], [0.46, 0.04], [0.55, 0.06], [0.76, 0.04], [0.80, 0.0]]], anal: [[[0.08, 0.02], [0.20, 0.08], [0.40, 0.05], [0.46, 0.0]]],
+      tail: { H: 0.10, L: 0.16, fork: -0.35 }, eye: [0.85, 0.045, 0.036], amp: 0.05, freq: 12, pect: 0.10 },
+    { prof: [[0, 0.05, 0.05, 0.04], [0.2, 0.11, 0.10, 0.08], [0.5, 0.16, 0.15, 0.10], [0.75, 0.155, 0.14, 0.095], [0.9, 0.12, 0.10, 0.075], [0.98, 0.07, 0.045, 0.05], [1, 0.035, 0.0, 0.03]],
+      dorsal: [[[0.10, 0.02], [0.22, 0.05], [0.78, 0.045], [0.82, 0.0]]], anal: [[[0.08, 0.02], [0.18, 0.05], [0.38, 0.04], [0.42, 0.0]]],
+      tail: { H: 0.15, L: 0.18, fork: 0.45 }, eye: [0.82, 0.055, 0.026], amp: 0.045, freq: 6, pect: 0.12 },
+    { prof: [[0, 0.03, 0.03, 0.025], [0.15, 0.08, 0.075, 0.05], [0.45, 0.17, 0.17, 0.085], [0.7, 0.18, 0.16, 0.085], [0.88, 0.145, 0.10, 0.07], [0.97, 0.08, 0.04, 0.045], [1, 0.03, 0.0, 0.02]],
+      dorsal: [[[0.56, 0.0], [0.60, 0.05], [0.68, 0.035], [0.70, 0.0]], [[0.06, 0.015], [0.40, 0.03], [0.47, 0.11], [0.50, 0.0]]],
+      anal: [[[0.06, 0.015], [0.33, 0.03], [0.40, 0.09], [0.43, 0.0]]],
+      tail: { H: 0.19, L: 0.22, fork: 0.78 }, eye: [0.89, 0.05, 0.034], amp: 0.06, freq: 7, pect: 0.17 },
+    { prof: [[0, 0.04, 0.04, 0.025], [0.15, 0.14, 0.13, 0.05], [0.4, 0.25, 0.23, 0.065], [0.6, 0.25, 0.22, 0.065], [0.78, 0.18, 0.15, 0.055], [0.88, 0.07, 0.06, 0.035], [0.97, 0.025, 0.02, 0.016], [1, 0.012, 0.01, 0.01]],
+      dorsal: [[[0.06, 0.02], [0.22, 0.10], [0.45, 0.09], [0.78, 0.03], [0.82, 0.0]]], anal: [[[0.06, 0.02], [0.22, 0.09], [0.45, 0.05], [0.55, 0.0]]],
+      tail: { H: 0.10, L: 0.13, fork: 0.0 }, eye: [0.74, 0.06, 0.026], amp: 0.04, freq: 9, pect: 0.09 },
+  ];
+  const fishZ = function (t) { return -0.30 + 0.80 * t; };
+  function fishGeo(S) {
+    const pos = [], nrm = [], col = [], uvs = [];
+    const put1 = function (p, n, c, uv) { pos.push(p[0], p[1], p[2]); nrm.push(n[0], n[1], n[2]); col.push(c[0], c[1], c[2]); uvs.push(uv[0], uv[1]); };
+    const sm = function (x) { x = Math.min(1, Math.max(0, x)); return x * x * (3 - 2 * x); };
+    const prof = function (t) {
+      const P = S.prof;
+      for (let k = 1; k < P.length; k++) if (t <= P[k][0] + 1e-9) {
+        const a = P[k - 1], b = P[k], q = sm((t - a[0]) / (b[0] - a[0]));
+        return [a[1] + (b[1] - a[1]) * q, a[2] + (b[2] - a[2]) * q, a[3] + (b[3] - a[3]) * q];
+      }
+      const L = P[P.length - 1]; return [L[1], L[2], L[3]];
+    };
+    // ---- 胴体: 断面をつなぐ。法線は となりの点から求めて、外向きにそろえる ----
+    const NR = 26, NS = 16, rows = [];
+    for (let k = 0; k <= NR; k++) {
+      const t = k / NR, pr = prof(t), row = [];
+      for (let j = 0; j <= NS; j++) {
+        const a = (j % NS) / NS * TAU, s = Math.sin(a), c = Math.cos(a);
+        // 断面は少し角ばった楕円（背と腹は細く、横は ふくらむ）
+        const sx = Math.sign(c) * Math.pow(Math.abs(c), 0.85), sy = Math.sign(s) * Math.pow(Math.abs(s), 1.1);
+        row.push({ p: [pr[2] * sx, sy > 0 ? pr[0] * sy : pr[1] * sy, fishZ(t)], uv: [t, s] });
+      }
+      rows.push(row);
     }
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
-    return g;
+    const cen = function (r) { let c = [0, 0, 0]; for (let j = 0; j < NS; j++) c = V.add(c, r[j].p); return V.mul(c, 1 / NS); };
+    const nr = rows.map(function (r, k) {
+      const c0 = cen(r);
+      return r.map(function (q, j) {
+        const jj = j % NS, dR = V.sub(r[(jj + 1) % NS].p, r[(jj + NS - 1) % NS].p), dA = V.sub(rows[Math.min(NR, k + 1)][j].p, rows[Math.max(0, k - 1)][j].p);
+        let n = V.cross(dR, dA);
+        if (V.len(n) < 1e-12) n = V.sub(q.p, c0);
+        if (V.len(n) < 1e-12) n = [0, 0, 1];
+        n = V.norm(n);
+        return V.dot(n, V.sub(q.p, c0)) < 0 && k < NR ? V.mul(n, -1) : (k === NR ? [0, 0, 1] : n);
+      });
+    });
+    for (let k = 0; k < NR; k++) for (let j = 0; j < NS; j++) {
+      [[k, j], [k + 1, j], [k, j + 1], [k, j + 1], [k + 1, j], [k + 1, j + 1]].forEach(function (e) {
+        put1(rows[e[0]][e[1]].p, nr[e[0]][e[1]], [0, 0, 0], rows[e[0]][e[1]].uv);
+      });
+    }
+    // 尾の付け根の断面をふさぐ
+    for (let j = 0; j < NS; j++) [[0, 0, -0.30], rows[0][j + 1].p, rows[0][j].p].forEach(function (p) { put1(p, [0, 0, -1], [0, 0, 0], [0, 0]); });
+    // ---- ひれ: 付け根の列とふちの列をつなぐ薄い板（両面描く） ----
+    const plate = function (base, edge, nrm0, part, flutter, uvy) {
+      const M = 3;
+      for (let k = 0; k + 1 < base.length; k++) for (let q = 0; q < M; q++) {
+        const f0 = q / M, f1 = (q + 1) / M;
+        const A = V.lerp(base[k], edge[k], f0), Bq = V.lerp(base[k + 1], edge[k + 1], f0), C = V.lerp(base[k + 1], edge[k + 1], f1), D = V.lerp(base[k], edge[k], f1);
+        const uy = function (kk) { return typeof uvy === 'function' ? uvy(kk) : uvy; };
+        [[A, f0, k], [Bq, f0, k + 1], [C, f1, k + 1], [A, f0, k], [C, f1, k + 1], [D, f1, k]].forEach(function (e) { put1(e[0], nrm0, [part, e[1], flutter], [0, uy(e[2])]); });
+      }
+    };
+    const finAlong = function (segs, top) {
+      segs.forEach(function (pts) {
+        const t0 = pts[0][0], t1 = pts[pts.length - 1][0], M = 12, base = [], edge = [];
+        for (let k = 0; k <= M; k++) {
+          const t = t0 + (t1 - t0) * k / M;
+          let h = 0;
+          for (let q = 1; q < pts.length; q++) if (t <= pts[q][0] + 1e-9) { const a = pts[q - 1], b = pts[q]; h = a[1] + (b[1] - a[1]) * (t - a[0]) / Math.max(1e-6, b[0] - a[0]); break; }
+          const pr = prof(t), y0 = top ? pr[0] * 0.96 : -pr[1] * 0.96, z = fishZ(t);
+          base.push([0, y0, z]);
+          edge.push([0, y0 + (top ? h : -h), z - h * 0.35]);
+        }
+        plate(base, edge, [1, 0, 0], 1, 0, top ? 2 : -2);
+      });
+    };
+    finAlong(S.dorsal, true);
+    finAlong(S.anal, false);
+    // 尾びれ
+    {
+      const T = S.tail, hp = prof(0)[0] * 0.95, NV = 12, base = [], edge = [];
+      for (let k = 0; k <= NV; k++) {
+        const v = -1 + 2 * k / NV, av = Math.abs(v);
+        const zEnd = -0.29 - T.L * (1 - T.fork * (1 - Math.pow(av, 1.6)));
+        base.push([0, v * hp, -0.285]);
+        edge.push([0, v * T.H * (T.fork > 0.5 ? 1 + 0.15 * av : 1), zEnd]);
+      }
+      plate(base, edge, [1, 0, 0], 3, 0, function (k) { return -1 + 2 * k / NV; });
+    }
+    // 胸びれ（左右。ひらひら動く）と腹びれ
+    for (let sd = -1; sd <= 1; sd += 2) {
+      const t = S.eye[0] - 0.13, pr = prof(t), z = fishZ(t), x = pr[2] * 0.92, y0 = -pr[1] * 0.25, L = S.pect;
+      // 付け根から扇のように広がる（ふちは丸い）
+      const fb = [], fe = [];
+      for (let q = 0; q <= 6; q++) {
+        const a = q / 6, ang = 0.40 - 0.80 * a, len = L * (0.70 + 0.30 * Math.sin(a * Math.PI) + 0.12 * (1 - a));
+        fb.push([sd * x, y0 + 0.022 - 0.04 * a, z - 0.008 * a]);
+        fe.push([sd * (x + len * 0.45), y0 + 0.022 - 0.04 * a + Math.sin(ang) * len * 0.55, z - Math.cos(ang) * len]);
+      }
+      plate(fb, fe, V.norm([sd, 0.2, 0]), 1, 1, 0);
+      const t2 = S.eye[0] - 0.20, pr2 = prof(t2), z2 = fishZ(t2), y2 = -pr2[1] * 0.92;
+      plate([[sd * pr2[2] * 0.3, y2, z2], [sd * pr2[2] * 0.3, y2 + 0.005, z2 - 0.03]], [[sd * pr2[2] * 0.55, y2 - 0.05, z2 - 0.06], [sd * pr2[2] * 0.5, y2 - 0.03, z2 - 0.08]], [sd, 0, 0], 1, 0, 0);
+    }
+    // ---- 目: 体の横に少し出た球。g は目の正面からの角度（瞳・虹彩・白目を描き分ける） ----
+    const eg = new THREE.IcosahedronGeometry(1, 2), EP = eg.attributes.position;
+    for (let sd = -1; sd <= 1; sd += 2) {
+      const t = S.eye[0], pr = prof(t), ey = S.eye[1], r = S.eye[2];
+      const xs = pr[2] * Math.pow(Math.max(0, 1 - Math.pow(Math.abs(ey) / pr[0], 1 / 1.1 * 2)), 0.5 / 0.85);
+      const c = [sd * (xs - r * 0.45), ey, fishZ(t)];
+      for (let k = 0; k < EP.count; k++) {
+        const d = [EP.getX(k), EP.getY(k), EP.getZ(k)];
+        const g = Math.acos(Math.max(-1, Math.min(1, d[0] * sd))) / Math.PI;
+        put1([c[0] + d[0] * r * 0.75, c[1] + d[1] * r, c[2] + d[2] * r], d, [2, g, 0], [0, 0]);
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    return geo;
   }
+
+  const fishVS = COL.GL.VS_HEAD + `
+    attribute vec4 iparm;           // y: 尾の振りの位相, z: 振る速さ
+    uniform float amp, time;
+    varying vec3 vWorld, vN, vObj, vInfo, vTint;
+    varying vec2 vUv;
+    void main() {
+      vec3 p = position;
+      float ph = time * iparm.z + iparm.y * 6.2831853;
+      // 体の後ろほど大きく左右にしなる波。頭は逆へ少し振れる
+      float w = pow(clamp((0.22 - p.z) / 0.72, 0.0, 1.0), 1.4);
+      p.x += amp * sin(ph - (0.22 - p.z) * 5.5) * w - amp * 0.22 * sin(ph) * clamp((p.z - 0.1) / 0.4, 0.0, 1.0);
+      p.x += 0.025 * color.b * color.g * sin(ph * 1.6 + 1.0) * sign(position.x);      // 胸びれ
+      mat4 m = modelMatrix * instanceMatrix;
+      vec4 wp = m * vec4(p, 1.0);
+      vWorld = wp.xyz;
+      vN = normalize(mat3(m) * normal);
+      vObj = position; vInfo = color; vUv = uv;
+      vTint = vec3(1.0);
+      #ifdef USE_INSTANCING_COLOR
+        vTint = instanceColor;
+      #endif
+      vec4 mvPosition = viewMatrix * wp;
+      gl_Position = projectionMatrix * mvPosition;` + COL.GL.VS_TAIL + `
+    }`;
+  const fishFS = COL.GL.FS_HEAD + COL.GL.COMMON + COL.GL.NOISE2 + COL.GL.CAUSTIC + `
+    uniform vec3 eye;               // 目の位置 (z, 高さ, 半径)
+    varying vec3 vWorld, vN, vObj, vInfo, vTint;
+    varying vec2 vUv;
+    float disc(vec2 p, vec2 c, float r, float aa) { return 1.0 - smoothstep(r - aa, r + aa, length(p - c)); }
+    float band(float x, float c, float hw, float aa) { return 1.0 - smoothstep(hw - aa, hw + aa, abs(x - c)); }
+    void main() {
+      #include <logdepthbuf_fragment>
+      vec3 N = normalize(vN);
+      if (!gl_FrontFacing) N = -N;
+      vec3 V = normalize(cameraPosition - vWorld), ld = sunDirAt(vWorld);
+      int part = int(vInfo.r + 0.5);
+      float edge = vInfo.g, z = vObj.z, y = vObj.y, v = vUv.y;
+      vec2 q = vec2(z, y);
+      float aa = max(fwidth(z), fwidth(y)) * 0.8 + 1e-4;
+      bool body = part == 0, fin = part == 1, tail = part == 3;
+      vec3 col = vec3(1.0);
+      float shine = 0.5, scaleK = 0.5;
+      vec3 iris = vec3(0.85, 0.65, 0.15);
+      #if SP == 0
+        // キイロハギ: 全身あざやかな黄色。尾の付け根に白いとげ
+        col = vec3(1.0, 0.74, 0.0) * (0.92 + 0.12 * clamp(v, -1.0, 1.0));
+        if (body) col = mix(col, vec3(0.97), disc(q, vec2(-0.25, 0.0), 0.016, aa));
+        if (fin || tail) col = vec3(1.0, 0.76, 0.04) * (1.0 + 0.10 * edge);
+        scaleK = 0.15; iris = vec3(0.10, 0.10, 0.10);
+      #elif SP == 1
+        // ナンヨウハギ: 青い体に黒いパレット模様、黄色い尾
+        col = vec3(0.06, 0.26, 0.92);
+        if (body) {
+          float cA = 0.065 + 0.05 * smoothstep(0.36, 0.0, z), hwA = 0.028 + 0.035 * exp(-pow((z - 0.10) / 0.12, 2.0));
+          float k = band(y, cA, hwA, aa) * step(-0.22, z) * (1.0 - smoothstep(0.34, 0.38, z));
+          float cB = -0.015 + 0.075 * smoothstep(-0.27, -0.04, z);
+          k = max(k, band(y, cB, 0.02, aa) * step(-0.29, z) * (1.0 - smoothstep(-0.06, -0.02, z)));
+          col = mix(col, vec3(0.02, 0.025, 0.05), k);
+        }
+        if (fin) col = mix(vec3(0.06, 0.24, 0.85), vec3(0.02), smoothstep(0.72, 0.80, edge));
+        if (vInfo.b > 0.5) col = mix(vec3(0.06, 0.26, 0.92), vec3(1.0, 0.82, 0.12), smoothstep(0.5, 0.75, edge));
+        if (tail) col = mix(vec3(1.0, 0.82, 0.10), vec3(0.02), smoothstep(0.70, 0.78, abs(v)) + smoothstep(0.12, 0.0, edge) * 0.8);
+        scaleK = 0.2; iris = vec3(0.05, 0.10, 0.25);
+      #elif SP == 2
+        // カクレクマノミ: だいだい色に、黒く縁どられた白い帯が3本
+        col = vec3(1.0, 0.40, 0.04);
+        float b1 = abs(z - (0.30 - 0.06 * y / 0.15)) - 0.032;
+        float b2 = abs(z - (0.02 + 0.05 * (1.0 - pow(y / 0.16, 2.0)))) - 0.04;
+        float b3 = abs(z + 0.25) - 0.022;
+        float bd = min(min(b1, b2), b3);
+        if (body || fin) {
+          col = mix(col, vec3(0.02), 1.0 - smoothstep(0.006, 0.006 + aa, bd));
+          col = mix(col, vec3(0.97), 1.0 - smoothstep(-aa, 0.0, bd));
+        }
+        if (fin || tail) col = mix(col, vec3(0.03), smoothstep(0.78, 0.84, edge)) ;
+        if (tail) col = mix(vec3(1.0, 0.42, 0.05), vec3(0.03), smoothstep(0.80, 0.86, edge));
+        scaleK = 0.25; iris = vec3(0.95, 0.45, 0.05);
+      #elif SP == 3
+        // ブダイ: 青緑の体に桃色のうろこの縁、くちばし、目のまわりの縞
+        col = vec3(0.14, 0.66, 0.58);
+        if (body) {
+          col = mix(col, vec3(0.42, 0.82, 0.76), smoothstep(0.30, 0.40, z));
+          col = mix(col, vec3(0.95, 0.55, 0.62), band(y, -0.02 + (z - 0.34) * 0.35, 0.006, aa) * step(0.34, z));
+          col = mix(col, vec3(0.95, 0.55, 0.62), band(y, 0.075 + (z - 0.34) * 0.10, 0.005, aa) * step(0.36, z));
+          col = mix(col, vec3(0.85, 0.92, 0.86), smoothstep(0.475, 0.485, z));
+        }
+        if (fin) col = mix(vec3(0.92, 0.48, 0.60), vec3(0.18, 0.48, 0.95), smoothstep(0.70, 0.80, edge));
+        if (tail) col = mix(vec3(0.92, 0.50, 0.62), vec3(0.18, 0.50, 0.95), max(smoothstep(0.62, 0.72, abs(v)), smoothstep(0.80, 0.88, edge)));
+        scaleK = 1.0; iris = vec3(0.95, 0.75, 0.25);
+      #elif SP == 4
+        // ギンガメアジ: 銀色。背は暗く、えらぶたに黒い点、尾の付け根にとげのある うろこ（稜鱗）
+        col = mix(vec3(0.84, 0.86, 0.89), vec3(0.20, 0.25, 0.31), smoothstep(0.05, 0.75, v));
+        if (body) {
+          col = mix(col, vec3(0.03), disc(q, vec2(0.31, 0.075), 0.013, aa));
+          col *= 1.0 - 0.30 * band(y, 0.0, 0.010, aa) * (1.0 - smoothstep(-0.10, -0.05, z));
+        }
+        if (fin) col = vInfo.b > 0.5 ? vec3(0.70, 0.72, 0.70) : mix(vec3(0.22, 0.26, 0.30), vec3(0.08, 0.09, 0.11), edge);
+        if (tail) col = vec3(0.20, 0.24, 0.28) * (1.0 - 0.4 * edge);
+        shine = 1.6; scaleK = 0.25; iris = vec3(0.80, 0.80, 0.70);
+      #else
+        // チョウチョウウオ: 前は白、後ろは黄色。目を通る黒い帯、斜めの細い線、背びれの後ろに目玉模様
+        col = mix(vec3(0.98, 0.96, 0.88), vec3(1.0, 0.80, 0.08), smoothstep(-0.05, 0.08, -(z - 0.05) - y * 0.6));
+        if (body) {
+          float ln = band(fract((z * 0.7 - y) * 18.0), 0.5, 0.08, fwidth((z * 0.7 - y) * 18.0)) * smoothstep(0.02, -0.06, -(z - 0.05) - y * 0.6);
+          col = mix(col, vec3(0.30, 0.28, 0.25), ln * 0.6);
+          col = mix(col, vec3(0.03), band(z, eye.x, 0.022, aa));
+          col = mix(col, vec3(0.10), smoothstep(0.50, 0.53, z));
+        }
+        if (fin || tail) col = mix(vec3(1.0, 0.82, 0.10), vec3(0.05), band(edge, 0.82, 0.04, 0.03));
+        if (fin && y > 0.0) {
+          float es = length(q - vec2(-0.16, 0.235));
+          col = mix(col, vec3(0.98), 1.0 - smoothstep(0.034, 0.036 + aa, es));
+          col = mix(col, vec3(0.02), 1.0 - smoothstep(0.026, 0.028 + aa, es));
+        }
+        scaleK = 0.3; iris = vec3(0.10);
+      #endif
+      if (part == 2) {
+        // 目: 黒い瞳、色のついた虹彩、まわりは体より暗い
+        float g = edge;
+        col = mix(iris, vec3(0.01), 1.0 - smoothstep(0.20, 0.23, g));
+        col = mix(col, vec3(0.08, 0.08, 0.09), smoothstep(0.36, 0.40, g));
+        shine = 3.0; scaleK = 0.0;
+      }
+      // うろこ: 少しずらして並べた丸の縁を暗く（遠くでは消す）
+      if (body && scaleK > 0.0) {
+        vec2 sq = vec2(z, y) * 70.0;
+        sq.y += 0.5 * mod(floor(sq.x), 2.0);
+        vec2 f = fract(sq) - vec2(0.0, 0.5);
+        float e = smoothstep(0.75, 1.0, length(f * vec2(1.0, 0.9)));
+        float k = clamp(1.0 - fwidth(sq.x) * 4.0, 0.0, 1.0);
+        #if SP == 3
+          col = mix(col, vec3(0.95, 0.55, 0.62), e * k * 0.55);
+        #else
+          col *= 1.0 - 0.14 * scaleK * e * k;
+        #endif
+      }
+      if (vInfo.b > 0.5 && SP != 1) col = mix(col, col * 1.15 + 0.05, 0.6 * edge);
+      // ひれは薄くて光が透ける。ふちほど薄い
+      if (fin || tail) col *= 0.88 + 0.12 * edge;
+      vec3 light = lightAt(vWorld, N);
+      if (fin || tail) light += sunCol * 0.30 * max(dot(-N, ld), 0.0);
+      if (vInfo.b > 0.5) light = mix(light, ambCol * 1.05 + sunCol * 0.45, 0.65);      // 胸びれは薄く透けるので、向きで暗くならない
+      float dpt = length(vWorld.xy) - COL_R;
+      if (dpt > 0.1) {
+        float ck = smoothstep(0.1, 1.0, dpt) * exp(-dpt / 16.0);
+        light += sunCol * caustic(vWorld.xz / 9.0, time * 0.7) * ck * 0.6 * max(dot(N, -normalize(vec3(vWorld.xy, 0.0))), 0.0);
+        light *= mix(vec3(1.0), exp(-dpt * vec3(0.09, 0.03, 0.02)), smoothstep(0.0, 0.6, dpt));
+      }
+      float fres = pow(1.0 - max(dot(N, V), 0.0), 3.0);
+      vec3 c = col * vTint * light + sunCol * pow(max(dot(reflect(-ld, N), V), 0.0), 50.0) * 0.5 * shine
+             + (ambCol * 0.8 + sunCol * 0.2) * fres * 0.20 * shine;
+      gl_FragColor = vec4(c, 1.0);
+      #include <fog_fragment>
+    }`;
+
+  const schools = [];
   function buildFish(scene) {
-    // 体: 横に平たいひし形（長さ 1、鼻先が +Z）
-    const Nz = [0, 0, 0.5], Tz = [0, 0, -0.32], Up = [0, 0.24, 0.03], Dn = [0, -0.2, 0.03], Lf = [-0.075, 0, 0.06], Rt = [0.075, 0, 0.06];
-    const body = faceted([Nz, Up, Rt, Nz, Rt, Dn, Nz, Dn, Lf, Nz, Lf, Up, Tz, Rt, Up, Tz, Dn, Rt, Tz, Lf, Dn, Tz, Up, Lf], [0, 0, 0.05]);
-    // 尾びれ: 付け根が原点、後ろ（-Z）へ広がる三角形を両面
-    const a = [0, 0, 0], b = [0, 0.2, -0.26], c = [0, -0.2, -0.26];
-    const tail = faceted([a, b, c, a, c, b], null);
-    fishB = dynMesh(scene, SCHOOLS * FPER, false, body, Kit.MAT.box);
-    fishT = dynMesh(scene, SCHOOLS * FPER, false, tail, Kit.MAT.box);
+    FISH.forEach(function (sp, k) {
+      const S = SHAPE[k];
+      const mat = COL.GL.material(fishVS, fishFS, { amp: { value: S.amp }, eye: { value: new THREE.Vector3(fishZ(S.eye[0]), S.eye[1], S.eye[2]) } },
+                                  { vertexColors: true, side: THREE.DoubleSide, defines: { SP: k } });
+      sp.d = dynMesh(scene, SCHOOLS * FPER, false, fishGeo(S), mat);
+      sp.d.mesh.count = 0;
+      sp.freq = S.freq;
+    });
+    COL.fishKinds = FISH;
     for (let k = 0; k < SCHOOLS; k++) schools.push({ on: false });
-    for (let n = 0; n < SCHOOLS * FPER; n++) { setLook(fishB, n, [1, 1, 1], 3); setLook(fishT, n, [1, 1, 1], 3); }
   }
-  function updateFish(dt, lc, pz, ph) {
+  function updateFish(dt, lc, pz) {
+    if (COL.fishFreeze) return;
     const near = lc && lc.index === 0 && pz > 23800 && COL.waterSdf(0, lc.u, pz) < 220;
+    const cnt = FISH.map(function () { return 0; });
     for (let k = 0; k < SCHOOLS; k++) {
       const sc = schools[k];
-      if (!near) { if (sc.on) { hide(fishB, k * FPER, FPER); hide(fishT, k * FPER, FPER); sc.on = false; } continue; }
+      if (!near) { sc.on = false; continue; }
       if (!sc.on || Math.hypot(sc.u - lc.u, sc.z - pz) > 140) {
         // 近くの、サンゴの多い浅い所に群れを置き直す
         sc.on = false;
@@ -313,35 +596,55 @@
           const ang = rand() * TAU, rr = 10 + rand() * 80, u = lc.u + Math.cos(ang) * rr, z = pz + Math.sin(ang) * rr;
           const g = COL.groundH(COL.landTheta(0, u), z), dep = -g;
           if (dep < 1.6 || dep > 20 || COL.waterSdf(0, u, z) > -8 || COL.reefAt(u, z) < 0.45) continue;
-          const sp = FISH[(k + Math.floor(rand() * 3)) % FISH.length];
-          sc.on = true; sc.u = u; sc.z = z; sc.sp = sp; sc.cnt = Math.min(FPER, sp.n + Math.floor(rand() * 3));
+          const si = (k + Math.floor(rand() * 3)) % FISH.length, sp = FISH[si];
+          sc.on = true; sc.u = u; sc.z = z; sc.si = si; sc.cnt = Math.min(FPER, sp.n + Math.floor(rand() * 3));
           sc.rad = 1.5 + rand() * (sp.n > 6 ? 6 : 3); sc.w = (0.25 + rand() * 0.3) * (rand() < 0.5 ? 1 : -1) * (sp.s > 0.45 ? 0.6 : 1);
           sc.ph = rand() * TAU; sc.y = g + 0.6 + rand() * Math.min(4, dep - 1.6);
-          for (let f = 0; f < FPER; f++) { setLook(fishB, k * FPER + f, sp.body, 3); setLook(fishT, k * FPER + f, sp.tail, 3); }
-          fishB.mesh.instanceColor.needsUpdate = fishT.mesh.instanceColor.needsUpdate = true;
         }
-        if (!sc.on) { hide(fishB, k * FPER, FPER); hide(fishT, k * FPER, FPER); continue; }
+        if (!sc.on) continue;
       }
-      const sg = Math.sign(sc.w), sp = sc.sp;
-      for (let f = 0; f < FPER; f++) {
-        const n = k * FPER + f;
-        if (f >= sc.cnt) { hide(fishB, n, 1); hide(fishT, n, 1); continue; }
+      const sg = Math.sign(sc.w), sp = FISH[sc.si], d = sp.d;
+      for (let f = 0; f < sc.cnt; f++) {
         const a = sc.ph + clock * sc.w - f * 0.22 * sg + Math.sin(f * 2.3) * 0.15;
         const rad = sc.rad * (0.7 + 0.3 * Math.sin(f * 1.9)) + Math.sin(clock * 0.6 + f) * 0.3;
         const u = sc.u + Math.cos(a) * rad, z = sc.z + Math.sin(a) * rad, th = COL.landTheta(0, u), fr = COL.frameAt(th);
+        const dy = Math.cos(clock * 0.8 + f) * 0.2;
         const y = Math.min(-0.45, sc.y + Math.sin(f * 1.7) * 0.5 + Math.sin(clock * 0.8 + f) * 0.25);
-        // 進む向き（輪の接線）に、体を少しくねらせる
-        const wag = Math.sin(clock * (sp.s > 0.45 ? 6 : 10) + f * 1.3), Zc = V.norm(V.add(V.mul(fr.east, -Math.sin(a) * sg), [0, 0, Math.cos(a) * sg]));
-        const Xc = V.cross(fr.up, Zc), Zb = V.norm(V.add(Zc, V.mul(Xc, wag * 0.08))), Xb = V.cross(fr.up, Zb);
-        const Zt = V.norm(V.add(Zc, V.mul(Xc, -wag * 0.45))), Xt = V.cross(fr.up, Zt);
-        const s = sp.s * (0.85 + 0.3 * Math.abs(Math.sin(f * 3.7))), P = COL.toWorld(th, z, y);
-        put(fishB, n, P, Xb, fr.up, Zb, 0, 0, 0, s, s, s);
-        put(fishT, n, V.add(P, V.mul(Zb, -0.31 * s)), Xt, fr.up, Zt, 0, 0, 0, s, s, s);
+        // 進む向き（輪の接線）。浮き沈みに合わせて少し頭を上げ下げし、曲がる内側へ少し傾く
+        const Zc = V.norm(V.add(V.mul(fr.east, -Math.sin(a) * sg), [0, 0, Math.cos(a) * sg]));
+        const Zp = V.norm(V.add(Zc, V.mul(fr.up, dy * 0.25))), X0 = V.norm(V.cross(fr.up, Zp));
+        const bank = 0.18 * sg, Y = V.norm(V.add(V.mul(V.cross(Zp, X0), Math.cos(bank)), V.mul(X0, Math.sin(bank)))), X = V.cross(Y, Zp);
+        const s = sp.s * (0.85 + 0.3 * Math.abs(Math.sin(f * 3.7))), P = COL.toWorld(th, z, y), n = cnt[sc.si]++;
+        put(d, n, P, X, Y, Zp, 0, 0, 0, s, s, s);
+        const id = k * FPER + f;
+        d.parm[n * 4 + 1] = (id * 0.6180339) % 1; d.parm[n * 4 + 2] = sp.freq * (0.9 + 0.2 * ((id * 0.37) % 1));
+        const tint = 0.9 + 0.2 * ((id * 0.7548777) % 1);
+        d.col[n * 3] = d.col[n * 3 + 1] = d.col[n * 3 + 2] = tint;
       }
     }
-    fishB.mesh.instanceMatrix.needsUpdate = true;
-    fishT.mesh.instanceMatrix.needsUpdate = true;
+    FISH.forEach(function (sp, k) {
+      const m = sp.d.mesh;
+      m.count = cnt[k];
+      if (cnt[k]) {
+        m.instanceMatrix.needsUpdate = true;
+        m.instanceColor.needsUpdate = true;
+        m.geometry.attributes.iparm.needsUpdate = true;
+      }
+    });
   }
+  // 確認用: 目の前に全種類を1匹ずつ横に並べる（?fish=1）
+  COL.debugFish = function (p, only) {
+    COL.fishFreeze = true;
+    const V0 = COL.V, r = V0.cross(p.fwd, p.up);
+    FISH.forEach(function (sp, k) {
+      const one = only !== undefined, P = V0.add(V0.add(V0.add(p.pos, V0.mul(p.up, COL.EYE)), V0.mul(p.fwd, one ? 0.55 : 2.2)), V0.mul(r, one ? 0 : (k - 2.5) * 0.62));
+      if (one && k !== only) { sp.d.mesh.count = 0; return; }
+      put(sp.d, 0, P, V0.mul(p.fwd, -1), p.up, V0.mul(r, -1), 0, 0, 0, 0.5, 0.5, 0.5);
+      sp.d.parm[2] = sp.freq; sp.d.parm[1] = k * 0.17; sp.d.col[0] = sp.d.col[1] = sp.d.col[2] = 1;
+      sp.d.mesh.count = 1;
+      sp.d.mesh.instanceMatrix.needsUpdate = sp.d.mesh.instanceColor.needsUpdate = sp.d.mesh.geometry.attributes.iparm.needsUpdate = true;
+    });
+  };
 
   // ================= 鳥 =================
   const FLOCKS = 5, PER = 8;
