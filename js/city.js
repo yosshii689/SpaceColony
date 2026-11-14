@@ -1524,9 +1524,13 @@
 
   let bseed = 12345;
   function makeBuilding(i, arche, u, z, w, d, h, seed, col) {
-    let lo = 1e9;
-    for (let q = 0; q < 4; q++) lo = Math.min(lo, COL.groundH(COL.landTheta(i, u + (q & 1 ? w : -w) / 2), z + (q & 2 ? d : -d) / 2));
-    const b = { arche: arche, u: u, z: z, w: w, d: d, h: h, base: lo - (w + d < 60 ? 0.35 : 1.5), seed: seed, col: col };
+    // 床の高さ: 敷地の一番高い所より少しだけ下（高い側が埋まるのは 0.35m まで）。低い側にできる すき間は基礎の台でふさぐ
+    let lo = 1e9, hi = -1e9;
+    for (let a = -1; a <= 1; a++) for (let c = -1; c <= 1; c++) {
+      const g = COL.groundH(COL.landTheta(i, u + a * w / 2), z + c * d / 2);
+      lo = Math.min(lo, g); hi = Math.max(hi, g);
+    }
+    const b = { arche: arche, u: u, z: z, w: w, d: d, h: h, base: Math.max(lo, hi - 0.35) - 0.05, lo: lo, seed: seed, col: col };
     b.M = massing(b);
     return b;
   }
@@ -1649,6 +1653,11 @@
         bag.add('box', i, cu, cz + m.d / 2 + t / 2, y, m.w + 2 * t, hh, t, cc, 3, 33);
         bag.add('box', i, cu - m.w / 2 - t / 2, cz, y, t, hh, m.d, cc, 3, 33);
         bag.add('box', i, cu + m.w / 2 + t / 2, cz, y, t, hh, m.d, cc, 3, 33);
+      }
+      // 基礎の台: 地面が床より低い所を、壁の下から地面の中までふさぐ
+      if (m.solid && m.y === 0 && (m.kind === 'box' || m.kind === 'cyl') && b.base - b.lo > 0.02) {
+        const fh = b.base - b.lo + 0.4, fc = [0.52, 0.51, 0.49];
+        bag.add(m.kind, i, b.u + m.ox, b.z + m.oz, b.base - fh, m.w + 0.06, fh, m.d + 0.06, fc, 3, 34, 0, 0, m.yaw || 0);
       }
       const sy = m.kind === 'ring' ? m.w : m.kind === 'dome' ? m.h : m.h;
       bag.add(m.kind, i, b.u + m.ox, b.z + m.oz, b.base + m.y, m.w, m.kind === 'dome' ? m.h : sy, m.d, m.col, m.style, Math.floor(b.seed * 50), m.glow, m.gi, m.yaw || 0);
@@ -1883,15 +1892,15 @@
     }
     // ---- 大きな建物の正面玄関: ひさしを支える柱、ガラスの風除室、両脇の光る柱 ----
     if (big) {
-      const cw = Math.min(12, b.w * 0.3), front = b.z - b.d / 2, yb = b.base + 1.5;
+      const cw = Math.min(12, b.w * 0.3), front = b.z - b.d / 2, yb = b.base;
       for (let sd = -1; sd <= 1; sd += 2) {
         const pu = b.u + sd * (cw / 2 - 0.4), g0 = COL.groundH(COL.landTheta(i, pu), front - 3.2);
         bag.add('box', i, pu, front - 3.2, g0 - 0.1, 0.42, yb + 4.4 - g0 + 0.1, 0.42, [0.62, 0.63, 0.66], 3, 63);
         bag.add('box', i, b.u + sd * (cw / 2 + 1.2), front - 0.5, g0 - 0.1, 0.5, 3.4, 0.5, DARK, 3, 63);
         bag.add('box', i, b.u + sd * (cw / 2 + 1.2), front - 0.78, g0 + 0.5, 0.3, 2.6, 0.06, [1.0, 0.92, 0.75], 5, 0, 0.8);
       }
-      bag.add('box', i, b.u, front - 0.9, b.base + 0.3, Math.min(5, cw * 0.6), 3.3, 1.7, GLASSR, 3, 64);
-      bag.add('box', i, b.u, front - 0.9, b.base + 3.6, Math.min(5, cw * 0.6) + 0.3, 0.16, 2.0, [0.30, 0.31, 0.33], 3, 64);
+      bag.add('box', i, b.u, front - 0.9, b.base - 0.05, Math.min(5, cw * 0.6), 3.0, 1.7, GLASSR, 3, 64);
+      bag.add('box', i, b.u, front - 0.9, b.base + 2.95, Math.min(5, cw * 0.6) + 0.3, 0.16, 2.0, [0.30, 0.31, 0.33], 3, 64);
     }
   }
   function emitFacade(i, b, bag, r) {
@@ -2078,8 +2087,8 @@
       }
       // 入口のひさしと、足元の明かり
       const front = b.z - b.d / 2 - 1.6;
-      bag.add('box', i, b.u, front, b.base + 1.5 + 4.4, Math.min(12, b.w * 0.3), 0.35, 4.0, DARK, 3, 5);
-      bag.add('box', i, b.u, front - 1.9, b.base + 1.5 + 4.2, Math.min(12, b.w * 0.3), 0.15, 0.15, [1.0, 0.9, 0.7], 5, 0, 1.4);
+      bag.add('box', i, b.u, front, b.base + 4.4, Math.min(12, b.w * 0.3), 0.35, 4.0, DARK, 3, 5);
+      bag.add('box', i, b.u, front - 1.9, b.base + 4.2, Math.min(12, b.w * 0.3), 0.15, 0.15, [1.0, 0.9, 0.7], 5, 0, 1.4);
       for (let sd = -1; sd <= 1; sd += 2) {
         const pu = b.u + sd * (Math.min(12, b.w * 0.3) / 2 + 4.0), pz = b.z - b.d / 2 - 0.9, g0 = COL.groundH(COL.landTheta(i, pu), pz);
         bag.add('box', i, pu, pz, g0 - 0.2, 5.5, 0.75, 1.6, [0.66, 0.65, 0.62], 3, 34);
