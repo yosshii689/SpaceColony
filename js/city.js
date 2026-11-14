@@ -320,9 +320,16 @@
   const treeVS = GL.VS_HEAD + `
     varying vec3 vWorld, vN, vCol;
     varying vec2 vUv;
+    uniform float time;
     void main() {
       mat4 m = modelMatrix * instanceMatrix;
       vec4 wp = m * vec4(position, 1.0);
+      if (uv.x < 0.0 && uv.y < -2.5) {
+        // 海の中の やわらかい物（海草・イソギンチャク・ウミウチワ）: 波に合わせて ゆっくり揺れる。先ほど大きく
+        float w = -uv.y - 3.0, ph = time * 1.3 + wp.x * 0.31 + wp.z * 0.43;
+        vec3 upd = normalize(vec3(-wp.xy, 1e-4)), east = vec3(upd.y, -upd.x, 0.0);
+        wp.xyz += (east * sin(ph) + vec3(0.0, 0.0, 1.0) * sin(ph * 0.73 + 1.3) * 0.7) * 0.13 * w * length(m[1].xyz);
+      }
       vWorld = wp.xyz;
       vN = normalize(mat3(m) * normal);
       vCol = color;
@@ -362,6 +369,17 @@
         vec3 q = mod(vWorld, 512.0);
         float k = clamp(1.0 - length(fwidth(vWorld)) * 1.5, 0.0, 1.0);
         if (vUv.y < -1.5) col *= mix(1.0, 0.78 + 0.44 * tn3(q * 4.0), k);                                   // 樹皮
+        else if (vUv.y < -1.1) {
+          // サンゴ: 表面の細かい粒（ポリプ）。ノウサンゴは迷路のような溝
+          float k2 = clamp(1.0 - length(fwidth(vWorld)) * 9.0, 0.0, 1.0);
+          col *= mix(1.0, 0.86 + 0.28 * tn3(q * 3.0), k);
+          if (vUv.y < -1.3) {
+            float mz = min(abs(tn3(q * 10.0) - 0.5), abs(tn3(q * 17.0 + 7.0) - 0.5) + 0.01);
+            col *= mix(1.0, 0.55 + 0.60 * smoothstep(0.0, 0.07, mz), k);
+          } else {
+            col *= mix(1.0, 0.93 + 0.16 * smoothstep(0.45, 0.65, tn3(q * 70.0)), k2);
+          }
+        }
         else col *= mix(1.0, 0.55 + 0.9 * (tn3(q * 2.2) * 0.6 + tn3(q * 6.5) * 0.4), k);                    // 茂みのむら
       }
       float sh = shadowAt(vWorld, N, 0.5);
@@ -698,69 +716,191 @@
     g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
     return g;
   }
-  // ---- サンゴ礁（色は置くときに付ける。頂点の明るさは根元を暗く） ----
-  const coralShade = function (y, top) { const s = 0.55 + 0.5 * Math.min(1, Math.max(0, y / top)); return [s, s, s]; };
-  function coralBrain() {           // 丸いノウサンゴ（半径 1m、高さ 0.7m）
+  // ---- サンゴ礁（色は置くときに付ける。頂点の明るさは根元を暗く、先を白っぽく） ----
+  //  uv.y の印: -1.25 表面に細かい粒（ポリプ）, -1.35 迷路のような溝（ノウサンゴ）, -3 − w 波で揺れる（w: 揺れの大きさ 0〜1）
+  const coralShade = function (y, top) { const s = 0.50 + 0.55 * Math.min(1, Math.max(0, y / top)); return [s, s, s]; };
+  const TIP = [1.30, 1.28, 1.18];
+  // 管を、印 flag を付けて足す（flagFn(k) で点ごとに変えられる）
+  const tubeF = function (b, pts, rads, sides, colFn, flagFn) {
+    const n0 = b.uv.length / 2;
+    b.tube(pts, rads, sides, colFn);
+    // tube は 区間ごとに sides × 6 頂点を出す。区間 k（1〜）の頂点は、手前側と先側が混ざるので、高さの近い方の印を付ける
+    const per = sides * 6;
+    for (let v = n0; v < b.uv.length / 2; v++) {
+      const seg = Math.floor((v - n0) / per), e = (v - n0) % 6, far = (e === 2 || e === 4 || e === 5) ? 1 : 0;
+      b.uv[v * 2 + 1] = flagFn(seg + far);
+    }
+  };
+  const POLYP = function () { return -1.25; };
+  function coralBrain() {           // 丸いノウサンゴ（半径 1m、高さ 0.7m）。こぶがいくつか寄り集まった形
     const b = new TB();
-    b.mesh(new THREE.IcosahedronGeometry(1, 1), function (p) { return coralShade(p[1] + 0.2, 0.9); }, -1, function (p) {
-      const k = 0.9 + 0.2 * COL.noise2(p[0] * 3 + p[2] * 2, p[1] * 3, 11);
-      return { p: [p[0] * k, Math.max(-0.2, p[1] * 0.7 * k), p[2] * k], n: V.norm([p[0], p[1] * 1.4, p[2]]) };
+    [[0, 0, 0, 1], [0.55, -0.05, 0.35, 0.55], [-0.5, -0.08, -0.4, 0.5]].forEach(function (L, li) {
+      b.mesh(new THREE.IcosahedronGeometry(1, li === 0 ? 2 : 1), function (p) { return coralShade(p[1] + 0.2, 0.8); }, -1.35, function (p) {
+        const k = L[3] * (0.88 + 0.24 * COL.noise2(p[0] * 3 + p[2] * 2 + li * 9, p[1] * 3, 11));
+        return { p: [L[0] + p[0] * k, Math.max(-0.2, L[1] + p[1] * 0.72 * k), L[2] + p[2] * k], n: V.norm([p[0], p[1] * 1.4, p[2]]) };
+      });
     });
     return b.geo();
   }
-  function coralBranch() {          // 枝サンゴ（高さ 約1.1m）
+  function coralBranch() {          // 枝サンゴ（高さ 約1.2m）: 3段に枝分かれして、先は白っぽい
     const b = new TB(), rnd = COL.rng(17);
-    for (let k = 0; k < 7; k++) {
-      const a = k / 7 * TAU + rnd() * 0.5, tilt = 0.3 + 0.55 * rnd(), len = 0.7 + 0.4 * rnd();
-      const d = [Math.cos(a) * Math.sin(tilt), Math.cos(tilt), Math.sin(a) * Math.sin(tilt)];
-      const m = V.mul(d, len * 0.5), e = V.add(V.mul(d, len), [0, 0.15, 0]);
-      b.tube([[0, -0.1, 0], m, e], [0.09, 0.07, 0.035], 4, function (j) { return coralShade(j * 0.5, 1); });
-      const d2 = V.norm(V.add(d, [Math.cos(a + 1.2) * 0.6, 0.3, Math.sin(a + 1.2) * 0.6]));
-      b.tube([m, V.add(m, V.mul(d2, len * 0.45))], [0.06, 0.03], 4, function () { return coralShade(0.8, 1); });
+    const grow = function (base, dir, len, rad, lvl) {
+      const end = V.add(base, V.mul(dir, len)), mid = V.add(V.lerp(base, end, 0.5), V.mul(randDir(rnd), len * 0.06));
+      const tip = lvl === 2;
+      if (lvl === 0) tubeF(b, [base, mid, end], [rad, rad * 0.82, rad * 0.66], 5, function (j) { return coralShade(end[1] * (0.4 + 0.3 * j), 1.1); }, POLYP);
+      else tubeF(b, [base, end], [rad, tip ? rad * 0.42 : rad * 0.66], 4, function () { return tip ? TIP : coralShade(end[1] * 0.8, 1.1); }, POLYP);
+      if (tip) return;
+      const n = 2;
+      for (let k = 0; k < n; k++) {
+        const side = V.norm(V.cross(dir, randDir(rnd)));
+        const d2 = V.norm(V.add(V.add(V.mul(dir, 0.75), V.mul(side, 0.65)), [0, 0.35, 0]));
+        grow(V.lerp(mid, end, 0.3 + 0.7 * k / Math.max(1, n - 1)), d2, len * (0.62 + 0.2 * rnd()), rad * 0.66, lvl + 1);
+      }
+    };
+    for (let k = 0; k < 5; k++) {
+      const a = k / 5 * TAU + rnd() * 0.6, tilt = 0.25 + 0.5 * rnd();
+      grow([Math.cos(a) * 0.06, -0.1, Math.sin(a) * 0.06], [Math.cos(a) * Math.sin(tilt), Math.cos(tilt), Math.sin(a) * Math.sin(tilt)], 0.50 + 0.15 * rnd(), 0.085, 0);
     }
     return b.geo();
   }
-  function coralTable() {           // テーブルサンゴ（直径 2m）
+  function coralTable() {           // テーブルサンゴ（直径 2m）: ふちが波打つ薄い棚が、ずれて何枚か重なる
     const b = new TB();
-    b.tube([[0, -0.1, 0], [0, 0.45, 0]], [0.12, 0.08], 5, function () { return coralShade(0.3, 1); });
-    b.mesh(new THREE.CylinderGeometry(1, 0.85, 0.12, 12, 1, false), function (p) { return coralShade(0.55 + 0.45 * Math.hypot(p[0], p[2]), 1); }, -1,
-      function (p, n) { return { p: [p[0], p[1] + 0.5 + 0.04 * Math.sin(Math.atan2(p[2], p[0]) * 5) * Math.hypot(p[0], p[2]), p[2]], n: n }; });
-    return b.geo();
-  }
-  function coralTube() {            // 筒の形の海綿（高さ 0.6〜1.1m）
-    const b = new TB();
-    [[0, 0, 1.1, 0.13], [0.28, 0.1, 0.75, 0.11], [-0.2, 0.22, 0.6, 0.1], [0.05, -0.27, 0.85, 0.12]].forEach(function (t) {
-      b.mesh(new THREE.CylinderGeometry(t[3], t[3] * 0.8, t[2], 7, 1, true), function (p) { return coralShade(p[1], t[2]); }, -1,
-        function (p, n) { return { p: [p[0] + t[0], p[1] + t[2] / 2 - 0.1, p[2] + t[1]], n: n }; });
+    [[0, 0.55, 0, 1.0], [0.45, 0.34, 0.30, 0.62], [-0.50, 0.24, -0.20, 0.50]].forEach(function (T, ti) {
+      tubeF(b, [[T[0] * 0.5, -0.1, T[2] * 0.5], [T[0], T[1] - 0.04, T[2]]], [0.13 * T[3] + 0.03, 0.10 * T[3] + 0.03], 5, function () { return coralShade(0.25, 1); }, POLYP);
+      b.mesh(new THREE.CylinderGeometry(1, 0.80, 0.07, 14, 1, false), function (p) {
+        const rr = Math.hypot(p[0] - T[0], p[2] - T[2]) / T[3];
+        return rr > 0.9 ? TIP : coralShade(0.45 + 0.5 * rr, 1);
+      }, -1.25, function (p, n) {
+        const a = Math.atan2(p[2], p[0]), rr = Math.hypot(p[0], p[2]);
+        const k = T[3] * (1 + 0.13 * Math.sin(a * 5 + ti * 2) * rr + 0.07 * Math.sin(a * 11 + ti));
+        return { p: [T[0] + p[0] * k, T[1] + p[1] + 0.07 * rr * rr * T[3] + 0.03 * Math.sin(a * 4 + ti) * rr, T[2] + p[2] * k], n: n };
+      });
     });
     return b.geo();
   }
-  function coralFan() {             // ウミウチワ（平たい扇、高さ 約1.1m）
-    const b = new TB(), N = 9, c0 = [0, 0.1, 0];
-    for (let k = 0; k < N; k++) {
-      const a0 = Math.PI * (0.12 + 0.76 * k / N), a1 = Math.PI * (0.12 + 0.76 * (k + 1) / N);
-      const p0 = [Math.cos(a0) * 0.8, 0.1 + Math.sin(a0), 0], p1 = [Math.cos(a1) * 0.8, 0.1 + Math.sin(a1), 0];
-      [c0, p0, p1].forEach(function (q) { b.vert(q, [0, 0, 1], coralShade(q[1], 1.1), -1, -1); });
-    }
-    b.tube([[0, -0.1, 0], [0, 0.15, 0]], [0.06, 0.05], 4, function () { return coralShade(0.2, 1); });
+  function coralTube() {            // 筒の形の海綿（高さ 0.5〜1.1m）: 口が少し開き、中は暗い
+    const b = new TB();
+    [[0, 0, 1.1, 0.14], [0.30, 0.1, 0.75, 0.12], [-0.22, 0.24, 0.6, 0.11], [0.05, -0.29, 0.88, 0.13], [-0.30, -0.12, 0.48, 0.10]].forEach(function (t) {
+      const lean = [t[0] * 0.35, 0, t[1] * 0.35];
+      b.mesh(new THREE.CylinderGeometry(1, 1, 1, 8, 2, true), function (p) { return p[1] > t[2] - 0.14 ? TIP : coralShade(p[1], t[2]); }, -1.25, function (p, n) {
+        const h = p[1] + 0.5, rr = t[3] * (0.72 + 0.20 * Math.sin(h * 2.6) + 0.22 * h * h * h);
+        return { p: [t[0] + lean[0] * h + p[0] * rr, h * t[2] - 0.1, t[1] + lean[2] * h + p[2] * rr], n: n };
+      });
+      b.mesh(new THREE.CircleGeometry(1, 8), function () { return [0.10, 0.10, 0.10]; }, -1, function (p) {
+        return { p: [t[0] + lean[0] * 0.9 + p[0] * t[3] * 0.95, t[2] * 0.88 - 0.1, t[1] + lean[2] * 0.9 - p[1] * t[3] * 0.95], n: [0, 1, 0] };
+      });
+    });
     return b.geo();
   }
-  function anemoneGeo() {           // イソギンチャク（直径 0.8m）
+  function coralFan() {             // ウミウチワ（高さ 約1.2m）: 1枚の面の中で細かく枝分かれした網。波で揺れる
+    const b = new TB(), rnd = COL.rng(23);
+    const sway = function (y) { return -3 - Math.min(1, Math.max(0, y / 1.2)); };
+    const grow = function (base, ang, len, rad, lvl) {
+      const end = [base[0] + Math.sin(ang) * len, base[1] + Math.cos(ang) * len, (rnd() - 0.5) * 0.03];
+      const ys = [base[1], end[1]];
+      tubeF(b, [base, end], [rad, rad * 0.7], 3, function () { return lvl >= 2 ? TIP : coralShade(end[1], 1.1); }, function (k) { return sway(ys[Math.min(1, k)]); });
+      if (lvl >= 2) return;
+      const n = lvl === 0 ? 3 : 2;
+      for (let k = 0; k < n; k++) grow(V.lerp(base, end, 0.45 + 0.55 * (k + 1) / n), ang + (k % 2 ? 1 : -1) * (0.35 + 0.35 * rnd()) + (rnd() - 0.5) * 0.2, len * 0.66, rad * 0.72, lvl + 1);
+    };
+    tubeF(b, [[0, -0.1, 0], [0, 0.12, 0]], [0.06, 0.05], 4, function () { return coralShade(0.2, 1); }, POLYP);
+    for (let k = 0; k < 5; k++) grow([0, 0.10, 0], (k - 2) * 0.42 + (rnd() - 0.5) * 0.15, 0.50 + 0.10 * rnd(), 0.034, 0);
+    return b.geo();
+  }
+  function anemoneGeo() {           // イソギンチャク（直径 0.9m）: たくさんの触手が波で揺れる
     const b = new TB(), rnd = COL.rng(29);
-    b.tube([[0, -0.1, 0], [0, 0.18, 0]], [0.32, 0.28], 8, function () { return coralShade(0.3, 1); });
-    for (let k = 0; k < 14; k++) {
-      const a = rnd() * TAU, rr = 0.25 * Math.sqrt(rnd()), base = [Math.cos(a) * rr, 0.18, Math.sin(a) * rr];
-      const tip = V.add(base, [Math.cos(a) * (0.12 + 0.2 * rnd()), 0.25 + 0.2 * rnd(), Math.sin(a) * (0.12 + 0.2 * rnd())]);
-      b.tube([base, tip], [0.04, 0.012], 3, function () { return coralShade(1, 1); });
+    tubeF(b, [[0, -0.1, 0], [0, 0.10, 0], [0, 0.20, 0]], [0.30, 0.34, 0.27], 9, function () { return coralShade(0.3, 1); }, POLYP);
+    for (let k = 0; k < 18; k++) {
+      const a = rnd() * TAU, rr = 0.26 * Math.sqrt(rnd()), base = [Math.cos(a) * rr, 0.19, Math.sin(a) * rr];
+      const out = 0.10 + 0.9 * rr, L = 0.30 + 0.22 * rnd();
+      const mid = V.add(base, [Math.cos(a) * out * 0.35, L * 0.55, Math.sin(a) * out * 0.35]), tip = V.add(base, [Math.cos(a) * out, L, Math.sin(a) * out]);
+      tubeF(b, [base, mid, tip], [0.040, 0.030, 0.02], 3, function (j) { return j === 2 ? TIP : coralShade(0.9, 1); }, function (j) { return -3 - [0, 0.45, 1][j]; });
     }
     return b.geo();
   }
   function rockGeo() {              // 岩（半径 1m、平たい）
     const b = new TB();
-    b.mesh(new THREE.IcosahedronGeometry(1, 1), function (p) { return coralShade(p[1] + 0.3, 0.8); }, -1, function (p, n) {
-      const k = 0.8 + 0.4 * COL.noise2(p[0] * 4, p[2] * 4 + p[1], 23);
-      return { p: [p[0] * k, p[1] * 0.55 * k, p[2] * k], n: n };
+    b.mesh(new THREE.IcosahedronGeometry(1, 1), function (p) { return coralShade(p[1] + 0.3, 0.8); }, -1, function (p) {
+      const k = 0.72 + 0.34 * COL.noise2(p[0] * 2.2, p[2] * 2.2 + p[1], 23) + 0.20 * COL.noise2(p[0] * 6 + p[1] * 3, p[2] * 6, 37);
+      return { p: [p[0] * k, p[1] * 0.55 * k, p[2] * k], n: V.norm([p[0], p[1] * 1.6, p[2]]) };
     });
+    return b.geo();
+  }
+  function coralSoft() {            // やわらかいサンゴ（高さ 約1m）: 太い茎の先に、ふさふさした房。波で揺れる
+    const b = new TB(), rnd = COL.rng(61);
+    for (let k = 0; k < 4; k++) {
+      const a = k / 4 * TAU + rnd(), tilt = k === 0 ? 0.05 : 0.35 + 0.3 * rnd(), L = k === 0 ? 0.75 : 0.45 + 0.25 * rnd();
+      const d = [Math.cos(a) * Math.sin(tilt), Math.cos(tilt), Math.sin(a) * Math.sin(tilt)], end = V.add([0, -0.1, 0], V.mul(d, L + 0.1));
+      tubeF(b, [[0, -0.1, 0], V.mul(d, L * 0.5), end], [0.10, 0.075, 0.06], 5, function () { return coralShade(0.5, 1); }, function (j) { return -3 - [0, 0.3, 0.7][j]; });
+      for (let q = 0; q < 4; q++) {
+        const o = V.add(end, V.mul(randDir(rnd), 0.12)), rr = 0.12 + 0.06 * rnd();
+        b.mesh(new THREE.IcosahedronGeometry(1, 0), function (p) { return p[1] > o[1] ? TIP : [1.05, 1.05, 1.05]; }, -3 - Math.min(1, 0.6 + o[1] * 0.4), function (p) {
+          return { p: [o[0] + p[0] * rr, o[1] + p[1] * rr, o[2] + p[2] * rr], n: V.norm(p) };
+        });
+      }
+    }
+    return b.geo();
+  }
+  function coralLeaf() {            // 葉の形のサンゴ（直径 1.6m）: 波打つ薄い板が、ばらの花のように渦を巻く
+    const b = new TB(), rnd = COL.rng(71), N = 7;
+    for (let k = 0; k < 9; k++) {
+      const a0 = k * 2.4, r0 = 0.10 + 0.085 * k, arc = 1.5 + 0.5 * rnd(), H = 0.34 + 0.05 * k + 0.1 * rnd(), flare = 0.25 + 0.05 * k, row = [];
+      for (let j = 0; j <= N; j++) {
+        const a = a0 + arc * (j / N - 0.5), edge = Math.sin(j / N * Math.PI), hh = H * (0.55 + 0.45 * edge) + 0.035 * Math.sin(j * 2.3 + k);
+        const c = Math.cos(a), sn = Math.sin(a);
+        row.push([[c * r0, -0.08, sn * r0], [c * (r0 + flare * 0.5), hh * 0.6, sn * (r0 + flare * 0.5)], [c * (r0 + flare), hh, sn * (r0 + flare)], [c, 0.5, sn]]);
+      }
+      for (let j = 0; j < N; j++) for (let e = 0; e < 2; e++) {
+        const A = row[j], Bq = row[j + 1];
+        [[A[e], Bq[e], Bq[e + 1]], [A[e], Bq[e + 1], A[e + 1]]].forEach(function (t) {
+          t.forEach(function (q) { b.vert(q, V.norm([q[0] * 0.5, 0.8, q[2] * 0.5]), q[1] > H * 0.5 ? TIP : coralShade(q[1] + 0.1, 0.5), -1, -1.25); });
+        });
+      }
+    }
+    return b.geo();
+  }
+  function clamGeo() {              // 大きなシャコガイ（幅 1m）: 波打つ2枚の殻と、その間の青い外とう膜
+    const b = new TB(), NU = 14, NV = 5;
+    const shell = function (u, v, sd) {          // u: 殻の長さ方向 0〜1, v: ちょうつがい 0 → ふち 1
+      const x = (u - 0.5) * 1.0, open = 0.16 + 0.34 * v, wave = 0.06 * Math.sin(u * Math.PI * 5) * v;
+      const rr = 0.42 * Math.sin(Math.PI * (0.08 + 0.84 * u)) * (0.35 + 0.65 * Math.sin(v * Math.PI * 0.5));
+      return [x, 0.02 + rr * Math.cos(open) + wave + 0.08, sd * (rr * Math.sin(open) + 0.03 * v)];
+    };
+    for (let sd = -1; sd <= 1; sd += 2) for (let i = 0; i < NU; i++) for (let j = 0; j < NV; j++) {
+      const q = [shell(i / NU, j / NV, sd), shell((i + 1) / NU, j / NV, sd), shell((i + 1) / NU, (j + 1) / NV, sd), shell(i / NU, (j + 1) / NV, sd)];
+      [0, 1, 2, 0, 2, 3].forEach(function (k) {
+        const sh = 0.55 + 0.25 * Math.abs(Math.sin((i + (k === 1 || k === 2 ? 1 : 0)) / NU * Math.PI * 5));
+        b.vert(q[k], V.norm([0, 0.4, sd]), [sh, sh * 0.97, sh * 0.9], -1, -1);
+      });
+    }
+    // 外とう膜（殻のふちの内側。あざやかな青緑）
+    for (let i = 0; i < NU; i++) {
+      const m = function (u, sd) { const pe = shell(u, 1, sd); return [pe[0], pe[1] - 0.03, pe[2] * 0.82]; };
+      const q = [m(i / NU, -1), m((i + 1) / NU, -1), m((i + 1) / NU, 1), m(i / NU, 1)];
+      [0, 1, 2, 0, 2, 3].forEach(function (k) {
+        const t = Math.abs(q[k][2]) * 4;
+        b.vert(q[k], [0, 1, 0], [0.10 + 0.25 * t, 0.45 + 0.5 * t, 1.25 - 0.3 * t], -1, -1.25);
+      });
+    }
+    return b.geo();
+  }
+  function seaweedGeo() {           // 海草（高さ 約1.3m）: 細長い葉の束。波で大きく揺れる
+    const b = new TB(), rnd = COL.rng(83), NSEG = 5;
+    for (let k = 0; k < 9; k++) {
+      const a = rnd() * TAU, rr = 0.22 * Math.sqrt(rnd()), H = 0.7 + 0.7 * rnd(), w = 0.045 + 0.03 * rnd(), lean = 0.15 + 0.25 * rnd();
+      const c = Math.cos(a), sn = Math.sin(a), row = [];
+      for (let j = 0; j <= NSEG; j++) {
+        const t = j / NSEG, cx = c * (rr + lean * t * t * H), cz = sn * (rr + lean * t * t * H), ww = w * (1 - 0.75 * t * t);
+        row.push([[cx - sn * ww, H * t - 0.05, cz + c * ww], [cx + sn * ww, H * t - 0.05, cz - c * ww], t]);
+      }
+      for (let j = 0; j < NSEG; j++) {
+        const A = row[j], Bq = row[j + 1];
+        [[A[0], A[2]], [A[1], A[2]], [Bq[1], Bq[2]], [A[0], A[2]], [Bq[1], Bq[2]], [Bq[0], Bq[2]]].forEach(function (e) {
+          const sh = 0.55 + 0.6 * e[1];
+          b.vert(e[0], V.norm([c, 0.5, sn]), [sh, sh, sh], -1, -3 - e[1] * e[1]);
+        });
+      }
+    }
     return b.geo();
   }
   // 遠く用: 何も描かない（サンゴは近くだけ）
@@ -922,7 +1062,8 @@
     return geoFrom(buf);
   }
 
-  const CORALS = { coralBrain: coralBrain, coralBranch: coralBranch, coralTable: coralTable, coralTube: coralTube, coralFan: coralFan, anemone: anemoneGeo, rock: rockGeo };
+  const CORALS = { coralBrain: coralBrain, coralBranch: coralBranch, coralTable: coralTable, coralTube: coralTube, coralFan: coralFan, anemone: anemoneGeo, rock: rockGeo,
+                   coralSoft: coralSoft, coralLeaf: coralLeaf, clam: clamGeo, seaweed: seaweedGeo };
   const TREE_KINDS = ['broad', 'broadLo', 'broad2', 'broad2Lo', 'palm', 'palmLo', 'conifer', 'coniferLo', 'shrub', 'shrubLo', 'hedge'];
   function initParts(renderer) {
     const box = new THREE.BoxGeometry(1, 1, 1); box.translate(0, 0.5, 0);
@@ -1005,7 +1146,7 @@
         return mesh;
       };
       const hi = make(kind);
-      if (UNIT[kind + 'Lo']) lod.push({ hi: hi, lo: make(kind + 'Lo'), car: kind.slice(0, 3) === 'car' });
+      if (UNIT[kind + 'Lo']) lod.push({ hi: hi, lo: make(kind + 'Lo'), car: kind.slice(0, 3) === 'car', reef: !!CORALS[kind] });
     }
     return lod;
   };
@@ -1729,7 +1870,8 @@
 
   // ---- サンゴ礁: 浜辺の前の浅い海に、群落ごとにまとまって ----
   const CORAL_C = [[1.0, 0.45, 0.55], [0.98, 0.55, 0.25], [0.68, 0.38, 0.88], [0.98, 0.85, 0.35], [0.35, 0.82, 0.76], [0.92, 0.30, 0.32], [0.88, 0.82, 0.70], [0.45, 0.62, 0.98]];
-  const CORAL_KIND = [['coralBrain', 0.25], ['coralBranch', 0.28], ['coralTable', 0.12], ['coralTube', 0.11], ['coralFan', 0.10], ['anemone', 0.07], ['rock', 0.07]];
+  const CORAL_KIND = [['coralBrain', 0.15], ['coralBranch', 0.20], ['coralTable', 0.11], ['coralTube', 0.07], ['coralFan', 0.08], ['anemone', 0.06], ['rock', 0.08],
+                      ['coralSoft', 0.08], ['coralLeaf', 0.09], ['clam', 0.02], ['seaweed', 0.06]];
   COL.reefAt = function (u, z) { return COL.fbm2(u / 38, z / 38, 3, 501); };   // 0〜1。大きいほどサンゴが多い（魚の群れも使う）
   function emitReef(i, cu, cz, bag, r) {
     if (i !== 0 || (cz + 1) * 250 < 24300) return;
@@ -1746,8 +1888,18 @@
       let s0 = 1;
       const s = (kind === 'coralTable' ? 0.7 + 1.0 * v3 : 0.55 + 1.0 * v3) * Math.min(1, dep / 2.6);   // 浅い所は小さく（海面から出ない）
       if (kind === 'rock') s0 = 0.6;
-      const col = kind === 'rock' ? [0.74, 0.70, 0.62] : kind === 'anemone' ? [0.95, 0.80, 0.55] : pick(CORAL_C, v4);
+      if (kind === 'clam') s0 = 0.8;
+      if (kind === 'coralLeaf') s0 = 0.65;
+      const col = kind === 'rock' ? [0.74, 0.70, 0.62] : kind === 'anemone' ? [0.95, 0.80, 0.55] : kind === 'clam' ? [0.92, 0.90, 0.84]
+                : kind === 'seaweed' ? [0.22 + 0.2 * v4, 0.62, 0.22] : pick(CORAL_C, v4);
       bag.add(kind, 0, u, z, g - 0.05, s * s0, s * s0 * (0.8 + 0.4 * v5), s * s0, col, 0, 0, 0, 0, v6 * TAU);
+      // 大きなサンゴの足元には岩の土台を、まわりには小さなサンゴや海草を寄せる（大小が混ざった群落になる）
+      if (kind !== 'rock' && kind !== 'seaweed' && s > 1.12) {
+        bag.add('rock', 0, u + (v5 - 0.5) * 0.5, z + (v6 - 0.5) * 0.5, g - 0.25, s * 0.95, s * 0.55, s * 0.95, [0.62, 0.58, 0.52], 0, 0, 0, 0, v4 * TAU);
+        const k2 = v5 < 0.35 ? 'coralBranch' : v5 < 0.6 ? 'coralLeaf' : v5 < 0.8 ? 'seaweed' : 'coralSoft';
+        bag.add(k2, 0, u + Math.cos(v4 * TAU) * s * 0.9, z + Math.sin(v4 * TAU) * s * 0.9, g - 0.05, s * 0.4, s * 0.4, s * 0.4,
+                k2 === 'seaweed' ? [0.25, 0.62, 0.22] : pick(CORAL_C, v6), 0, 0, 0, 0, v3 * TAU);
+      }
     }
   }
 
@@ -1930,7 +2082,7 @@
       grp.userData.dist = dist;
       // 木は 210m より先では簡略な形にする
       const lod = grp.userData.lod;
-      for (let k = 0; k < lod.length; k++) { const lim = lod[k].car ? Q.car : Q.tree; lod[k].hi.visible = dist < lim; lod[k].lo.visible = dist >= lim; }
+      for (let k = 0; k < lod.length; k++) { const lim = lod[k].car ? Q.car : lod[k].reef ? Math.min(Q.tree, 160) : Q.tree; lod[k].hi.visible = dist < lim; lod[k].lo.visible = dist >= lim; }
     });
     // 建物の本体は近いまとまりから先に描く（奥のまとまりの、隠れた画素を計算しないで済む）
     for (let k = 0; k < regionList.length; k++) {

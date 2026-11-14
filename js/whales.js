@@ -20,17 +20,43 @@
 
   // ================= 体の形 =================
   //  体の軸は +Z（頭）。体長 1 で作って、置くときに体長倍する
+  //  uv: 胴体は (体のまわりの位置 0〜1, 尾 0 → 頭 1)。模様・のどの畝・口・目はこれを使ってシェーダーで描く。ひれ・こぶは uv.x = -1
   function whaleGeo() {
-    const pos = [], nrm = [], col = [];
-    const DARK = [0.13, 0.15, 0.19], BELLY = [0.80, 0.81, 0.82], FIN = [0.72, 0.73, 0.74];
-    const tri = function (a, b, c, na, nb, nc, ca, cb, cc) {
-      pos.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]);
-      nrm.push(na[0], na[1], na[2], nb[0], nb[1], nb[2], nc[0], nc[1], nc[2]);
-      col.push(ca[0], ca[1], ca[2], cb[0], cb[1], cb[2], cc[0], cc[1], cc[2]);
+    const pos = [], nrm = [], col = [], uvs = [];
+    const DARK = [0.115, 0.135, 0.17], WHITE = [0.84, 0.85, 0.86];
+    const mixc = function (a, b, t) { return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]; };
+    // 断面の列（どの列も同じ点の数。最後の点は最初の点と同じ位置）をつないで、なめらかな面にする
+    const loft = function (rows) {
+      const K = rows.length, J = rows[0].length, M = J - 1;
+      const cen = rows.map(function (r) { let c = [0, 0, 0]; for (let j = 0; j < M; j++) c = V.add(c, r[j].p); return V.mul(c, 1 / M); });
+      const nr = rows.map(function (r, k) {
+        return r.map(function (q, j) {
+          const jj = j % M, dR = V.sub(r[(jj + 1) % M].p, r[(jj + M - 1) % M].p);
+          const dA = V.sub(rows[Math.min(K - 1, k + 1)][j].p, rows[Math.max(0, k - 1)][j].p);
+          let n = V.cross(dR, dA);
+          const out = V.sub(q.p, cen[k]);
+          if (V.len(n) < 1e-14) n = V.len(out) > 1e-9 ? out : dA;
+          if (V.len(n) < 1e-14) n = [0, 1, 0];
+          n = V.norm(n);
+          return V.dot(n, out) < 0 ? V.mul(n, -1) : n;
+        });
+      });
+      const put = function (q, n) { pos.push(q.p[0], q.p[1], q.p[2]); nrm.push(n[0], n[1], n[2]); col.push(q.c[0], q.c[1], q.c[2]); uvs.push(q.uv[0], q.uv[1]); };
+      for (let k = 0; k + 1 < K; k++) for (let j = 0; j < M; j++) {
+        put(rows[k][j], nr[k][j]); put(rows[k + 1][j], nr[k + 1][j]); put(rows[k][j + 1], nr[k][j + 1]);
+        put(rows[k][j + 1], nr[k][j + 1]); put(rows[k + 1][j], nr[k + 1][j]); put(rows[k + 1][j + 1], nr[k + 1][j + 1]);
+      }
     };
-    // 胴体: 尾の付け根(0) → 頭(1) の太さ。ザトウクジラらしく、尾の付け根は細長い
-    const PROF = [[0, 0.05], [0.12, 0.12], [0.28, 0.38], [0.42, 0.75], [0.56, 0.98], [0.68, 1.0], [0.80, 0.90], [0.90, 0.68], [0.96, 0.42], [1.0, 0.08]];
-    const RM = 0.105, NR = 26, NS = 16;
+    // 列を、その中心へ縮めた列（先をふさぐ用）
+    const shrink = function (row, f) {
+      let c = [0, 0, 0];
+      for (let j = 0; j + 1 < row.length; j++) c = V.add(c, row[j].p);
+      c = V.mul(c, 1 / (row.length - 1));
+      return row.map(function (q) { return { p: V.add(c, V.mul(V.sub(q.p, c), f)), c: q.c, uv: q.uv }; });
+    };
+    // ---- 胴体: 尾の付け根(0) → 頭(1) の太さ。ザトウクジラらしく、尾の付け根は細長く、頭は平たくて下あごが大きい ----
+    const PROF = [[0, 0.085], [0.12, 0.13], [0.28, 0.38], [0.42, 0.75], [0.56, 0.98], [0.68, 1.0], [0.80, 0.93], [0.90, 0.76], [0.96, 0.54], [0.99, 0.33], [1.0, 0.16]];
+    const RM = 0.105, NR = 64, NS = 36;
     const prof = function (t) {
       for (let k = 1; k < PROF.length; k++) if (t <= PROF[k][0]) {
         const a = PROF[k - 1], b = PROF[k], q = smooth((t - a[0]) / (b[0] - a[0]));
@@ -38,60 +64,109 @@
       }
       return PROF[PROF.length - 1][1];
     };
-    const ring = function (t) {
-      const r = RM * prof(t), z = -0.5 + t, out = [];
-      for (let j = 0; j <= NS; j++) {
-        const a = j / NS * TAU, s = Math.sin(a), c = Math.cos(a);
-        const y = r * s * (s > 0 ? (t > 0.85 ? 0.68 : 0.82) : 0.74) - r * 0.06;
-        const belly = Math.max(0, Math.min(1, (-s - 0.15) * 1.6)) * (t > 0.45 ? 1 : 0.4);
-        const shade = 0.9 + 0.2 * COL.noise2(j * 0.7, t * 9, 5);
-        const cc = [(DARK[0] + (BELLY[0] - DARK[0]) * belly) * shade, (DARK[1] + (BELLY[1] - DARK[1]) * belly) * shade, (DARK[2] + (BELLY[2] - DARK[2]) * belly) * shade];
-        out.push({ p: [r * c * 0.95, y, z], n: V.norm([c, s * 1.15, 0]), c: cc });
-      }
-      return out;
+    const mouthPhi = function (t) { return -0.10 + 0.52 * smooth((t - 0.74) / 0.26); };     // 口の線の高さ（シェーダーと同じ式）
+    const bodyPt = function (t, a) {
+      const sn = Math.sin(a), cs = Math.cos(a), r = RM * prof(t), z = -0.5 + t;
+      const head = smooth((t - 0.70) / 0.22), ped = 1 - smooth(t / 0.30);
+      const top = (0.82 - 0.22 * head) * (1 + 0.30 * ped), bot = (0.74 + 0.24 * head * (1 - 0.5 * smooth((t - 0.93) / 0.07))) * (1 + 0.30 * ped);
+      let wid = (0.95 + 0.05 * head) * (1 - 0.45 * ped);
+      // 上あごは細く平たいふた、下あごは幅が広い
+      const mp = mouthPhi(t);
+      wid *= 1 + head * (sn < mp ? 0.07 * smooth((mp - sn) / 0.25) * smooth((sn + 1) / 0.5) : -0.13 * smooth((sn - mp) / 0.35));
+      let y = r * sn * (sn > 0 ? top : bot) - r * 0.06;
+      // 上あごの平たさ: 真上のあたりを低く
+      if (sn > 0) y -= r * 0.10 * head * Math.pow(sn, 4);
+      // 背中のこぶ（背びれの土台）と、尾の付け根の背と腹の峰
+      y += RM * 0.085 * Math.exp(-Math.pow((t - 0.335) / 0.05, 2)) * Math.pow(Math.max(0, sn), 6);
+      y += r * 0.22 * ped * Math.pow(Math.abs(sn), 8) * Math.sign(sn);
+      return [r * cs * wid, y, z];
     };
-    let prev = ring(0);
-    for (let k = 1; k <= NR; k++) {
-      const cur = ring(k / NR);
-      for (let j = 0; j < NS; j++) {
-        const a = prev[j], b = prev[j + 1], c = cur[j], d = cur[j + 1];
-        tri(a.p, c.p, b.p, a.n, c.n, b.n, a.c, c.c, b.c);
-        tri(b.p, c.p, d.p, b.n, c.n, d.n, b.c, c.c, d.c);
+    const rows = [];
+    for (let k = 0; k <= NR; k++) {
+      const t = k / NR, row = [];
+      for (let j = 0; j <= NS; j++) {
+        const a = (j % NS) / NS * TAU, sh = 0.92 + 0.16 * COL.noise2(Math.cos(a) * 2.3 + t * 9, Math.sin(a) * 2.3, 5);
+        row.push({ p: bodyPt(t, a), c: [sh, sh, sh], uv: [j / NS, t] });
       }
-      prev = cur;
+      rows.push(row);
     }
-    // 頭の先と尾の先をふさぐ
-    [[0, [0, -RM * 0.006, -0.5], [0, 0, -1]], [1, [0, -RM * 0.006, 0.5], [0, 0, 1]]].forEach(function (e) {
-      const rg = ring(e[0]);
-      for (let j = 0; j < NS; j++) tri(e[1], rg[j].p, rg[j + 1].p, e[2], e[2], e[2], DARK, rg[j].c, rg[j + 1].c);
-    });
-    // 板の形（胸びれ・尾びれ・背びれ）: 点の列 top を上下両面に
-    const plate = function (pts, n, c) { for (let k = 1; k + 1 < pts.length; k++) tri(pts[0], pts[k], pts[k + 1], n, n, n, c, c, c); };
-    // 胸びれ（とても長い。体長の 3 分の 1）
+    rows.unshift(shrink(rows[0], 0.02));
+    rows.push(shrink(rows[rows.length - 1], 0.45).map(function (q) { return { p: V.add(q.p, [0, 0, 0.006]), c: q.c, uv: q.uv }; }));
+    rows.push(shrink(rows[rows.length - 1], 0.02).map(function (q) { return { p: V.add(q.p, [0, 0, 0.002]), c: q.c, uv: q.uv }; }));
+    loft(rows);
+    // ---- 頭のこぶ（上あごに3列、下あごの先にも）----
+    const knob = function (t, a, rad) {
+      const c = bodyPt(t, a), g = new THREE.IcosahedronGeometry(1, 1), P = g.attributes.position;
+      const out = V.norm([Math.cos(a), Math.sin(a) * 1.3, 0.25]);
+      for (let k = 0; k < P.count; k++) {
+        const d = [P.getX(k), P.getY(k), P.getZ(k)];
+        const q = V.add(V.add(c, V.mul(out, -rad * 0.35)), [d[0] * rad, d[1] * rad, d[2] * rad * 1.25]);
+        pos.push(q[0], q[1], q[2]); nrm.push(d[0], d[1], d[2]); col.push(DARK[0] * 1.15, DARK[1] * 1.15, DARK[2] * 1.15); uvs.push(-1, 2);
+      }
+    };
+    const kr = COL.rng(77);
+    for (let k = 0; k < 8; k++) { const t = 0.795 + k * 0.026; knob(t, Math.PI / 2, 0.0034 + 0.0010 * kr()); }
+    for (let k = 0; k < 7; k++) for (let sd = -1; sd <= 1; sd += 2) { const t = 0.80 + k * 0.027; knob(t, Math.PI / 2 + sd * (0.62 - 0.02 * k), 0.0030 + 0.0010 * kr()); }
+    for (let k = 0; k < 5; k++) for (let sd = -1; sd <= 1; sd += 2) knob(0.90 + k * 0.02, -Math.PI / 2 + sd * (0.75 - 0.10 * k), 0.0030 + 0.0012 * kr());
+    knob(0.992, -Math.PI / 2, 0.0050);
+    // ---- 胸びれ（とても長い。体長の 3 分の 1）: 厚みのある翼の形。前のふちに でこぼこ、上は黒白のまだら、下は白 ----
     for (let sd = -1; sd <= 1; sd += 2) {
-      const root = [sd * RM * 0.8, -RM * 0.35, 0.16], dir = V.norm([sd * 1.0, -0.38, -0.5]), back = V.norm([0, 0, -1]);
-      const L = 0.31, pts = [];
-      for (let k = 0; k <= 6; k++) {
-        const t = k / 6, ch = 0.075 * (1 - t) + 0.02, c = V.add(root, V.mul(dir, L * t));
-        pts.push({ f: V.add(c, V.mul(back, -ch * 0.35)), b: V.add(c, V.mul(back, ch * 0.65)) });
+      const root = [sd * RM * 0.78, -RM * 0.36, 0.165], dir = V.norm([sd * 1.0, -0.40, -0.52]), back = [0, 0, -1], nn = V.norm(V.cross(dir, back));
+      const L = 0.315, NK = 18, NA = 12, fr = [];
+      for (let k = 0; k <= NK; k++) {
+        const t = k / NK, c = V.add(V.add(root, V.mul(dir, L * t)), [0, -0.022 * t * t, -0.02 * t * t]);
+        const ch = (0.074 * (1 - Math.pow(t, 1.7)) + 0.010) * (0.62 + 0.38 * smooth(t / 0.14));
+        const bump = 0.0055 * Math.max(0, Math.sin(t * Math.PI * 9.5)) * (1 - 0.6 * t) * smooth((t - 0.08) / 0.1);
+        const th = ch * 0.12 * (1 - 0.45 * t), le = V.add(c, V.mul(back, -(ch * 0.36 + bump))), row = [];
+        for (let j = 0; j <= NA; j++) {
+          const ph = (j % NA) / NA * TAU, xc = 0.5 - 0.5 * Math.cos(ph), yy = Math.sin(ph) * th * (1.25 - 0.75 * xc);
+          const pp = V.add(V.add(le, V.mul(back, xc * (ch + bump))), V.mul(nn, yy));
+          const topSide = Math.sin(ph) * sd > 0, nz = COL.noise2(t * 7 + sd * 3, xc * 3, 41);
+          const cc = topSide ? mixc(DARK, WHITE, smooth((nz - 0.42) / 0.12) * (0.25 + 0.75 * t) + (xc < 0.12 ? 0.5 : 0)) : WHITE;
+          row.push({ p: pp, c: [Math.min(0.86, cc[0]), Math.min(0.87, cc[1]), Math.min(0.88, cc[2])], uv: [-1, 0] });
+        }
+        fr.push(row);
       }
-      const nn = V.norm(V.cross(dir, back)), cc = FIN;
-      for (let k = 0; k < 6; k++) {
-        tri(pts[k].f, pts[k + 1].f, pts[k].b, nn, nn, nn, cc, cc, cc);
-        tri(pts[k].b, pts[k + 1].f, pts[k + 1].b, nn, nn, nn, cc, cc, cc);
-      }
+      fr.push(shrink(fr[fr.length - 1], 0.03));
+      loft(fr);
     }
-    // 尾びれ（水平。左右の葉の真ん中に切れ込み）
+    // ---- 尾びれ（水平）: 厚みのある翼の形。真ん中に切れ込み、後ろのふちは ぎざぎざ。裏は白い模様 ----
     for (let sd = -1; sd <= 1; sd += 2) {
-      const z0 = -0.5;
-      plate([[0, 0, z0 + 0.03], [sd * 0.05, 0, z0 - 0.0], [sd * 0.16, 0, z0 - 0.06], [sd * 0.17, 0, z0 - 0.085], [sd * 0.08, 0, z0 - 0.075], [0, 0, z0 - 0.04]], [0, 1, 0], DARK);
+      const z0 = -0.5, NK = 16, NA = 10, fr = [];
+      for (let k = 0; k <= NK; k++) {
+        const t = k / NK, le = 0.034 - 0.119 * Math.pow(t, 1.15);
+        const te = Math.min(le - 0.0025, -0.040 - 0.042 * smooth(t / 0.45) - 0.003 * t + 0.0030 * Math.sin(t * 44) * smooth(t / 0.15) * (1 - t));
+        const th = 0.0105 * Math.pow(1 - t, 0.8) + 0.0012, row = [];
+        for (let j = 0; j <= NA; j++) {
+          const ph = (j % NA) / NA * TAU, xc = 0.5 - 0.5 * Math.cos(ph), up = Math.sin(ph);
+          const nz = COL.noise2(t * 5 + sd * 9, xc * 4, 53);
+          const cc = up < 0 ? mixc(DARK, WHITE, smooth((nz - 0.35) / 0.15) * smooth((t - 0.08) / 0.2) * (1 - smooth((xc - 0.7) / 0.25))) : DARK;
+          row.push({ p: [sd * 0.172 * t, up * th * (1.2 - 0.7 * xc) + 0.004 * t * t, z0 + le - xc * (le - te)], c: cc, uv: [-1, 1] });
+        }
+        fr.push(row);
+      }
+      fr.push(shrink(fr[fr.length - 1], 0.03));
+      loft(fr);
     }
-    // 背びれ（小さなこぶ）
-    plate([[0, RM * 0.75, -0.14], [0, RM * 0.95, -0.17], [0, RM * 0.62, -0.22]], [1, 0, 0], DARK);
+    // ---- 背びれ（こぶの上の、後ろへ反った小さなひれ）----
+    {
+      const NK = 7, NA = 10, fr = [], yb = Math.min(bodyPt(0.365, Math.PI / 2)[1], bodyPt(0.285, Math.PI / 2)[1]) - 0.002, H = RM * 0.21;
+      for (let k = 0; k <= NK; k++) {
+        const t = k / NK, le = -0.150 - 0.050 * Math.pow(t, 0.7), te = Math.min(le - 0.004, -0.215 - 0.014 * t), th = 0.0055 * (1 - t) + 0.0008, row = [];
+        for (let j = 0; j <= NA; j++) {
+          const ph = (j % NA) / NA * TAU, xc = 0.5 - 0.5 * Math.cos(ph);
+          row.push({ p: [Math.sin(ph) * th * (1.2 - 0.6 * xc), yb + H * t, le - xc * (le - te)], c: DARK, uv: [-1, 1] });
+        }
+        fr.push(row);
+      }
+      fr.push(shrink(fr[fr.length - 1], 0.03));
+      loft(fr);
+    }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
     g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
     g.computeBoundingSphere();
     g.boundingSphere.radius *= 1.4;
     return g;
@@ -100,7 +175,8 @@
   // 尾に向かってしなる（尾の先ほど大きく上下する）
   const whaleVS = GL.VS_HEAD + `
     uniform float phase, amp, len;
-    varying vec3 vWorld, vN, vCol;
+    varying vec3 vWorld, vN, vCol, vObj, vAxis;
+    varying vec2 vUv;
     void main() {
       vec3 p = position;
       float back = clamp((0.1 - p.z) / 0.6, 0.0, 1.0);
@@ -109,22 +185,58 @@
       vec4 wp = modelMatrix * vec4(p, 1.0);
       vWorld = wp.xyz;
       vN = normalize(mat3(modelMatrix) * normal);
+      vAxis = normalize(mat3(modelMatrix) * vec3(0.0, 0.0, 1.0));
       vCol = color;
+      vObj = position;
+      vUv = uv;
       vec4 mvPosition = viewMatrix * wp;
       gl_Position = projectionMatrix * mvPosition;` + GL.VS_TAIL + `
     }`;
   const whaleFS = GL.FS_HEAD + GL.COMMON + GL.NOISE2 + GL.CAUSTIC + `
-    varying vec3 vWorld, vN, vCol;
+    uniform float seed, len;
+    varying vec3 vWorld, vN, vCol, vObj, vAxis;
+    varying vec2 vUv;
     void main() {
       #include <logdepthbuf_fragment>
       vec3 N = normalize(vN);
-      if (!gl_FrontFacing) N = -N;
       vec3 V = normalize(cameraPosition - vWorld), ld = sunDirAt(vWorld);
+      vec3 base = vCol;
+      vec3 q = vObj * len;                                       // 体の上の位置 [m]（泳いでも模様がずれない）
+      float nearK = clamp(1.0 - length(fwidth(q)) * 3.0, 0.0, 1.0);
+      if (vUv.x >= 0.0) {
+        float a = vUv.x * 6.2831853, s = sin(a), c = cos(a), v = vUv.y;
+        // 背は黒く、腹は白い（境目は個体ごとに違う、入り組んだ形）
+        float n1 = vnoise(vec2(c * 2.6 + v * 13.0 + seed, s * 2.6 - seed * 0.7));
+        float thr = mix(0.80, 0.34, smoothstep(0.38, 0.62, v));
+        float belly = smoothstep(thr - 0.10, thr + 0.10, -s + (n1 - 0.5) * 0.75);
+        base = mix(vec3(0.15, 0.17, 0.21), vec3(0.80, 0.81, 0.82), belly) * vCol;
+        // のどの畝（下あごから へそ まで、縦に走る溝）
+        float phiM = -0.10 + 0.52 * smoothstep(0.74, 1.0, v);
+        float pk = smoothstep(0.50, 0.60, v) * (1.0 - smoothstep(0.975, 0.997, v)) * smoothstep(0.03, 0.20, phiM - s);
+        float fineK = clamp(1.0 - fwidth(vUv.x) * 46.0 * 1.6, 0.0, 1.0);
+        float groove = pow(0.5 - 0.5 * cos(a * 46.0), 3.0);
+        vec3 T = normalize(cross(vAxis, N));
+        N = normalize(N + T * sin(a * 46.0) * 0.60 * pk * fineK);
+        base *= 1.0 - 0.50 * groove * pk * fineK;
+        // 口の線
+        float ml = (1.0 - smoothstep(0.010, 0.028, abs(s - phiM))) * smoothstep(0.740, 0.748, v) * clamp(1.0 - fwidth(s) / 0.03, 0.0, 1.0);
+        base *= 1.0 - 0.78 * ml;
+        // 目（口の線の終わりのすぐ下）
+        float er = length(vec2(v - 0.733, (s + 0.22) * 0.085));
+        base = mix(base, base * 1.5 + 0.04, (1.0 - smoothstep(0.0042, 0.0062, er)) * 0.6);
+        base = mix(base, vec3(0.015), 1.0 - smoothstep(0.0028, 0.0036, er));
+        // 噴気孔（頭の上の2本の切れ目）
+        float bh = (1.0 - smoothstep(0.0010, 0.0020, abs(abs(vObj.x) - 0.0042 - (v - 0.795) * 0.12))) * (1.0 - smoothstep(0.008, 0.010, abs(v - 0.795))) * step(0.5, s);
+        base *= 1.0 - 0.85 * bh;
+      }
+      // 皮膚のまだら・古い傷あと・フジツボの白い点
+      float n = vnoise(q.xz * 1.1 + q.y * 0.3 + seed) * 0.5 + vnoise(q.zy * 2.7 - seed) * 0.5;
+      vec3 col = base * (0.80 + 0.40 * n);
+      float scar = (1.0 - smoothstep(0.0, 0.035, abs(vnoise(q.zy * vec2(0.35, 1.6) + seed * 2.0) - 0.5))) * step(0.62, vnoise(q.zx * 0.21 + seed)) * nearK;
+      col = mix(col, vec3(0.62, 0.64, 0.66), scar * 0.45);
+      float bn = step(0.78, vnoise(q.zy * 9.0 + seed)) * smoothstep(0.66, 0.82, vnoise(q.zx * 0.55 + q.y * 0.4 + seed * 3.0)) * nearK;
+      col = mix(col, vec3(0.86, 0.85, 0.78), bn * 0.85);
       vec3 light = lightAt(vWorld, N);
-      // 皮膚のまだら模様
-      vec3 q = mod(vWorld, 512.0);
-      float n = vnoise(q.xz * 1.1 + q.y * 0.3) * 0.5 + vnoise(q.zy * 2.7) * 0.5;
-      vec3 col = vCol * (0.82 + 0.36 * n);
       // 水の中: 光の網目と、青みがかり
       float dpt = length(vWorld.xy) - COL_R;
       if (dpt > 0.1) {
@@ -132,8 +244,11 @@
         light += sunCol * caustic(vWorld.xz / 9.0, time * 0.7) * ck * 0.7 * max(dot(N, -normalize(vec3(vWorld.xy, 0.0))), 0.0);
         light *= mix(vec3(1.0), exp(-dpt * vec3(0.09, 0.03, 0.02)), smoothstep(0.0, 0.6, dpt));
       }
-      // ぬれた肌のつや
-      col = col * light + sunCol * pow(max(dot(reflect(-ld, N), V), 0.0), 30.0) * 0.25;
+      // ぬれた肌のつや（水の上では空も映す）
+      float wetK = 1.0 - smoothstep(0.0, 1.5, dpt);
+      float fres = pow(1.0 - max(dot(N, V), 0.0), 4.0);
+      col = col * light + sunCol * pow(max(dot(reflect(-ld, N), V), 0.0), 60.0) * (0.25 + 1.1 * wetK)
+          + (ambCol * 1.1 + sunCol * 0.2) * (0.05 + 0.60 * fres) * wetK;
       gl_FragColor = vec4(col, 1.0);
       #include <fog_fragment>
     }`;
@@ -222,8 +337,8 @@
 
   COL.buildWhales = function (scene) {
     const geo = whaleGeo();
-    WHALES.forEach(function (W) {
-      const mat = GL.material(whaleVS, whaleFS, { phase: { value: 0 }, amp: { value: W.amp }, len: { value: W.len } }, { vertexColors: true, side: THREE.DoubleSide });
+    WHALES.forEach(function (W, wi) {
+      const mat = GL.material(whaleVS, whaleFS, { phase: { value: 0 }, amp: { value: W.amp }, len: { value: W.len }, seed: { value: 3.7 + wi * 17.3 } }, { vertexColors: true, side: THREE.DoubleSide });
       const mesh = new THREE.Mesh(geo, mat);
       mesh.matrixAutoUpdate = false;
       scene.add(mesh);
