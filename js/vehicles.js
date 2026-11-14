@@ -11,10 +11,15 @@
 
   function buildCar(scene) {
     const b = new Kit.Bag(), P = Kit.localPart, body = [0.80, 0.12, 0.10];
-    // 車体・窓・タイヤ・灯りは city.js の細かい形（中は外から描かないので、運転席からは外が見える）
-    P(b, 'carA', 0, 0, 0, 1, 1, 1, body, 8, 1);
-    P(b, 'box', 0, 1.40, -0.20, 1.20, 0.03, 1.5, [0.30, 0.31, 0.33], 3);      // 天井の内張り
-    P(b, 'box', 0, 0.80, 0.76, 1.5, 0.10, 0.50, DARK, 3);                     // ダッシュボード
+    // 車体・ガラスの屋根・タイヤ・光の帯は city.js の細かい形（中は外から描かないので、運転席からは外も空も見える）
+    //  確認用: ?car=carB などで形を選べる
+    const kind = (/[?&]car=(car[ABC])/.exec(location.search) || [])[1] || 'carA';
+    P(b, kind, 0, 0, 0, 1, 1, 1, body, 8, 1);
+    if (kind === 'carA') {
+      P(b, 'box', 0, 0.70, 1.12, 1.6, 0.10, 0.86, DARK, 3);                    // ダッシュボード（前の光の帯が車内から見えないよう、前まで伸ばす）
+      P(b, 'box', 0.36, 0.80, 0.98, 0.34, 0.09, 0.012, [0.25, 0.85, 1.0], 5, 0.35);   // 計器の光る板
+      P(b, 'box', 0.36, 0.80, 0.80, 0.30, 0.012, 0.03, [0.30, 0.31, 0.33], 3);        // 操縦かんの横棒
+    }
     carGrp = new THREE.Group();
     b.build(carGrp, true).forEach(function (l) { l.lo.visible = false; });
     carGrp.matrixAutoUpdate = false;
@@ -53,7 +58,7 @@
     p.up = car.up;
     p.fwd = V.norm(V.add(V.mul(car.fwd, Math.cos(lookYaw)), V.mul(right, Math.sin(lookYaw))));
     p.pitch = Math.max(-1.3, Math.min(1.3, p.pitch + inp.pitch));
-    p.pos = V.add(V.add(car.pos, V.mul(car.up, 1.25 - COL.EYE)), V.add(V.mul(right, -0.36), V.mul(car.fwd, 0.30)));
+    p.pos = V.add(V.add(car.pos, V.mul(car.up, 1.13 - COL.EYE)), V.add(V.mul(right, -0.36), V.mul(car.fwd, 0.30)));
     p.vel = V.mul(car.fwd, car.speed);
     p.fly = false; p.swim = false; p.grounded = true;
     placeCarMesh();

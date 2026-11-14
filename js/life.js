@@ -88,12 +88,12 @@
 
   function buildAgents(scene) {
     carD = dynMesh(scene, CARS * CAR_PARTS, true);
-    // 近くの車は細かい形（丸みのある車体・窓・タイヤ・灯り）で描く。2種類の形を、車ごとにどちらか使う
-    carFine = [dynMesh(scene, CARS, true, Kit.UNIT.carA, Kit.MAT.carA), dynMesh(scene, CARS, true, Kit.UNIT.carB, Kit.MAT.carB)];
+    // 近くの車は細かい形（流線形の車体・ガラスの屋根・タイヤ・光の帯）で描く。3種類の形を、車ごとにどれか使う
+    carFine = ['carA', 'carB', 'carC'].map(function (k) { return dynMesh(scene, CARS, true, Kit.UNIT[k], Kit.MAT[k]); });
     for (let n = 0; n < CARS; n++) {
-      const c = { on: false, speed: 11 + (n % 5) * 1.2, long: n % 9 === 0, fine: n % 3 === 1 ? 1 : 0 };
+      const c = { on: false, speed: 11 + (n % 5) * 1.2, long: n % 9 === 0, fine: [0, 1, 0, 2, 1][n % 5] };
       cars.push(c);
-      setLook(carFine[0], n, CARC[n % CARC.length], 8, 1); setLook(carFine[1], n, CARC[n % CARC.length], 8, 1);
+      carFine.forEach(function (d) { setLook(d, n, CARC[n % CARC.length], 8, 1); });
       setLook(carD, n * 4, c.long ? [0.92, 0.92, 0.90] : CARC[n % CARC.length], 3);
       setLook(carD, n * 4 + 1, [0.10, 0.12, 0.15], 3);
       setLook(carD, n * 4 + 2, [1.0, 0.96, 0.82], 5, 2.0);
@@ -219,7 +219,7 @@
         }
       } else c.on = false;
       if (!c.on && n < carMax) respawn(c, lc, pz, 110, 520, false);
-      hide(carFine[0], n, 1); hide(carFine[1], n, 1);
+      hide(carFine[0], n, 1); hide(carFine[1], n, 1); hide(carFine[2], n, 1);
       if (!c.on) { hide(carD, n * 4, 4); continue; }
       const f = agentFrame(c), len = c.long ? 7.5 : 4.3, hgt = c.long ? 2.3 : 0.62;
       if (!c.long && COL.carDist && lc && Math.hypot(f.u - lc.u, f.z - pz) < COL.carDist) {
@@ -233,7 +233,7 @@
       put(carD, n * 4 + 3, f.P, f.X, f.Y, f.Z, 0, 0.58, -len / 2, 1.5, 0.12, 0.06);
     }
     carD.mesh.instanceMatrix.needsUpdate = true;
-    carFine[0].mesh.instanceMatrix.needsUpdate = true; carFine[1].mesh.instanceMatrix.needsUpdate = true;
+    carFine.forEach(function (d) { d.mesh.instanceMatrix.needsUpdate = true; });
     // ---- 住民（夜は少ない） ----
     const active = Math.round(PEOPLE * (1 - 0.6 * night) * sc);
     for (let n = 0; n < PEOPLE; n++) {
