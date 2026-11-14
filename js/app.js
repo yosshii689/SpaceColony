@@ -53,6 +53,7 @@ function appMain() {
   if (q.get('lamps') !== null) for (let k = 0; k < COL.save.lamps.length; k++) COL.save.lamps[k] = q.get('lamps') === '1' ? 1 : 0;
   COL.buildSpace(scene);
   COL.buildMansion(scene);
+  COL.buildHotel(scene);
 
   // ---- 画質の設定（タイトル画面で選ぶ。localStorage に覚える） ----
   let qAuto = true;
@@ -180,6 +181,7 @@ function appMain() {
   // 確認用: ?pilot=1&sx=&sy=&sz=&syaw=&spitch=&rare=1&cargo=数 / ?home=1
   if (q.get('pilot') === '1') COL.debugPilot(player, { pos: q.get('sz') !== null ? [num('sx', 0), num('sy', 0), num('sz', -2000)] : null, yaw: num('syaw', 0) * rad, pitch: num('spitch', 0) * rad, rare: q.get('rare') === '1', cargo: num('cargo', 0) });
   if (q.get('home') === '1') COL.goHome(player);
+  if (q.get('hotel') === '1') COL.goHotel(player);              // 確認用: ホテルの部屋から始める
   if (q.get('whale') === '1') COL.debugWhale(player, num('wt', 0), num('wd', 40), num('wh', 3), num('ws', 0) * rad);
 
   // ---- 入力 ----
@@ -358,7 +360,9 @@ function appMain() {
     const e = COL.eyePos(player), d = COL.lookDir(player);
     camera.position.set(e[0], e[1], e[2]);
     // 高く飛ぶほど手前の描画限界を遠ざけて、遠景の奥行きの精度をかせぐ
-    const ce = COL.toCyl(e), near = COL.onTrain ? 0.15 : Math.min(12, 0.35 + 0.03 * Math.max(0, ce.h - COL.groundH(ce.theta, ce.z)));
+    //  （足もとの高さは、地面か、屋上・ホテルの部屋の床など乗れる面の高い方から測る）
+    const ce = COL.toCyl(e), floor = Math.max(COL.groundH(ce.theta, ce.z), COL.solidTop ? COL.solidTop(ce.theta, ce.z, ce.h) : -1e9);
+    const near = COL.onTrain ? 0.15 : Math.min(12, 0.35 + 0.03 * Math.max(0, ce.h - floor));
     if (Math.abs(near - camera.near) > 0.02) { camera.near = near; camera.updateProjectionMatrix(); }
     camera.up.set(player.up[0], player.up[1], player.up[2]);
     camera.lookAt(_look.set(e[0] + d[0], e[1] + d[1], e[2] + d[2]));
@@ -418,9 +422,10 @@ function appMain() {
     // 続いて採掘船、豪邸（看板・スイッチ・ベッド）
     const sp = COL.updateSpace(dt, player, usePressed && !vh.used && !busy && !pt, camera);
     const free = !vh.used && !busy && !pt && !sp.used && !sp.text;
-    const mn = COL.updateMansion(dt, player, usePressed && free, skipPressed && free);
+    const ht = COL.updateHotel(dt, player, usePressed && free, skipPressed && free);
+    const mn = COL.updateMansion(dt, player, usePressed && free && !ht.used, skipPressed && free && !ht.used);
     COL.updateToast(dt);
-    $('prompt').textContent = vh.text || (busy ? '' : pt) || sp.text || mn.text || '';
+    $('prompt').textContent = vh.text || (busy ? '' : pt) || sp.text || ht.text || mn.text || '';
     usePressed = callPressed = skipPressed = false;
     const eye = COL.toCyl(COL.eyePos(player)), wat = COL.waterAt(eye.theta, eye.z);
     COL.underwater = !!wat && eye.h < wat.level;

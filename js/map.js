@@ -84,10 +84,19 @@
       ctx.fillText(COL.save && COL.save.owned ? '自宅' : '売地', hxy[0] - 10, hxy[1]);
       ctx.fillStyle = '#eef4fb';
     }
+    // ホテル（最上階のスイート）
+    if (COL.hotelInfo) {
+      const hxy = toXY(COL.landTheta(0, COL.hotelInfo.u), COL.hotelInfo.z);
+      ctx.fillStyle = '#c9a25a'; ctx.strokeStyle = '#2a1e00'; ctx.lineWidth = 1.5;
+      ctx.fillRect(hxy[0] - 4, hxy[1] - 10, 8, 14); ctx.strokeRect(hxy[0] - 4, hxy[1] - 10, 8, 14);
+      ctx.textAlign = 'left'; ctx.fillStyle = '#f0d9a0';
+      ctx.fillText('ホテル', hxy[0] + 8, hxy[1] + 2);
+      ctx.fillStyle = '#eef4fb';
+    }
     ctx.textAlign = 'center';
     const how = COL.onTrain ? '駅をクリックすると、その駅まで乗っていく（時間を飛ばす）'
               : COL.devMode ? 'クリックした場所へ移動' : '見るだけ（普通にプレイでは地図から移動できません）';
-    ctx.fillText(how + '（緑の丸 = モノレールの駅、水色の四角 = 宇宙港エレベーター、黄色の家 = 売地・自宅）　M か Esc で閉じる', cv.width / 2, box.y + box.h + 22);
+    ctx.fillText(how + '（緑の丸 = モノレールの駅、水色の四角 = 宇宙港エレベーター、黄色の家 = 売地・自宅、金色の塔 = ホテル）　M か Esc で閉じる', cv.width / 2, box.y + box.h + 22);
     // 現在地と向き
     const c = COL.toCyl(p.pos), xy = toXY(c.theta, Math.max(0, c.z)), f = COL.frameAt(c.theta);
     const ang = Math.atan2(COL.V.dot(p.fwd, f.east), COL.V.dot(p.fwd, f.north));

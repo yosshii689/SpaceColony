@@ -51,7 +51,7 @@
     const lamps = [];
     for (let k = 0; k < LAMPS; k++) lamps.push(k === 0 ? 1 : 0);      // 最初は居間だけ点いている
     return { id: '', name: '', dev: false, created: 0, updated: 0,
-             money: 0, owned: false, trips: 0, day: 1, lamps: lamps, clock: 10, pos: null };
+             money: 0, owned: false, trips: 0, day: 1, lamps: lamps, clock: 10, pos: null, hotelPaid: false };
   };
   const num = function (v, d) { return typeof v === 'number' && isFinite(v) ? v : d; };
   const vec3 = function (a) { return Array.isArray(a) && a.length === 3 && a.every(function (v) { return typeof v === 'number' && isFinite(v); }); };
@@ -61,7 +61,7 @@
     const s = fresh();
     s.id = String(d.id || ''); s.name = String(d.name || '').slice(0, 20); s.dev = !!d.dev;
     s.created = num(d.created, 0); s.updated = num(d.updated, 0);
-    s.money = Math.max(0, num(d.money, 0)); s.owned = !!d.owned;
+    s.money = Math.max(0, num(d.money, 0)); s.owned = !!d.owned; s.hotelPaid = !!d.hotelPaid;
     s.trips = d.trips | 0; s.day = Math.max(1, d.day | 0);
     if (Array.isArray(d.lamps)) for (let k = 0; k < LAMPS; k++) s.lamps[k] = d.lamps[k] ? 1 : 0;
     s.clock = ((num(d.clock, 10) % 24) + 24) % 24;

@@ -1322,7 +1322,10 @@
       if (!solids.has(key)) solids.set(key, []);
       solids.get(key).push(s);
     }
+    return s;
   }
+  // 当たり判定を一時的に外す（ホテルの部屋の中にいる間、その建物の本体など）。COL.solidSkip(s) が true なら無いものとする
+  const skip = function (s) { return COL.solidSkip ? COL.solidSkip(s) : false; };
   const solidsAt = function (i, u, z) { return solids.get(i + ',' + Math.floor(u / B) + ',' + Math.floor(z / B)); };
   // 足元の高さ h から 1m 以内で乗れる面（屋上・低層部の上・桟橋）の高さ
   COL.solidTop = function (theta, z, h) {
@@ -1332,7 +1335,7 @@
     let best = -1e9;
     if (list) for (let k = 0; k < list.length; k++) {
       const s = list[k];
-      if (lc.u > s.u0 && lc.u < s.u1 && z > s.z0 && z < s.z1 && s.top <= h + 1.0 && s.top > best) best = s.top;
+      if (lc.u > s.u0 && lc.u < s.u1 && z > s.z0 && z < s.z1 && s.top <= h + 1.0 && s.top > best && !skip(s)) best = s.top;
     }
     return best;
   };
@@ -1344,7 +1347,7 @@
     let best = 1e9;
     if (list) for (let k = 0; k < list.length; k++) {
       const s = list[k];
-      if (lc.u > s.u0 - 0.3 && lc.u < s.u1 + 0.3 && z > s.z0 - 0.3 && z < s.z1 + 0.3 && s.bottom >= h + 1.8 && s.bottom < best) best = s.bottom;
+      if (lc.u > s.u0 - 0.3 && lc.u < s.u1 + 0.3 && z > s.z0 - 0.3 && z < s.z1 + 0.3 && s.bottom >= h + 1.8 && s.bottom < best && !skip(s)) best = s.bottom;
     }
     return best;
   };
@@ -1358,7 +1361,7 @@
     let u = lc.u, z = pos[2], moved = false;
     for (let k = 0; k < list.length; k++) {
       const s = list[k];
-      if (h >= s.top - 1.0 || h + 1.8 <= s.bottom) continue;
+      if (h >= s.top - 1.0 || h + 1.8 <= s.bottom || skip(s)) continue;
       const a = u - (s.u0 - PAD), b = (s.u1 + PAD) - u, c = z - (s.z0 - PAD), d = (s.z1 + PAD) - z;
       if (a <= 0 || b <= 0 || c <= 0 || d <= 0) continue;
       const m = Math.min(a, b, c, d);
@@ -1536,6 +1539,15 @@
   }
 
   const plans = new Map();
+  // 陸地 i の (u, z) から r 以内に建つ建物（街区の計画から。ホテルなど、決まった建物を探すのに使う）
+  COL.buildingsNear = function (i, u, z, r) {
+    const out = [];
+    for (let a = Math.floor((u - r) / B); a <= Math.floor((u + r) / B); a++) for (let c = Math.floor((z - r) / B); c <= Math.floor((z + r) / B); c++) {
+      const plan = planBlock(i, a, c);
+      if (plan) plan.b.forEach(function (b) { if (Math.hypot(b.u - u, b.z - z) < r) out.push(b); });
+    }
+    return out;
+  };
   function planBlock(i, bu, bz) {
     const key = i + ',' + bu + ',' + bz;
     if (plans.has(key)) return plans.get(key);
@@ -1932,8 +1944,8 @@
           }
         }
       }
-      if (fin && m.style === 0 && m.h > 15) {
-        // 縦のルーバー: 窓のマスの境目（3m ごと）に
+      if (fin && m.style === 0 && m.h > 15 && m !== b.clearView) {
+        // 縦のルーバー: 窓のマスの境目（3m ごと）に（ホテルの部屋のある段は、景色が見えるよう付けない）
         for (let face = 0; face < 4; face++) {
           const alongX = face < 2, sd = face % 2 ? 1 : -1, len = alongX ? m.w : m.d, off = (alongX ? m.d : m.w) / 2 + 0.3;
           for (let x = -Math.floor((len / 2 - 0.45) / 3) * 3; x <= len / 2 - 0.45; x += 3) {
